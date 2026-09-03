@@ -1,0 +1,36 @@
+import { createClientFromRequest } from "npm:@base44/sdk";
+
+const verify = (request: Request) => {
+  const expected = Deno.env.get("SHARED_EMAIL_WEBHOOK_SECRET");
+  const supplied = new URL(request.url).searchParams.get("token") || request.headers.get("x-shared-email-secret");
+  return Boolean(expected && supplied && expected === supplied);
+};
+
+const statusFor = (event: string) => ({ processed: "queued", delivered: "delivered", deferred: "deferred", bounce: "bounced", blocked: "failed", dropped: "dropped" } as Record<string, string>)[event];
+
+Deno.serve(async (request) => {
+  if (request.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
+  if (!verify(request)) return Response.json({ error: "Invalid webhook secret" }, { status: 401 });
+  try {
+    const base44 = createClientFromRequest(request);
+    const events = await request.json();
+    const rows = Array.isArray(events) ? events : [events];
+    for (const event of rows.slice(0, 500)) {
+      const providerMessageId = String(event.sg_message_id || "").split(".")[0];
+      await base44.asServiceRole.entities.SharedEmailEvent.create({
+        provider: "sendgrid", provider_event_id: String(event.sg_event_id || ""), provider_message_id: providerMessageId,
+        event_type: String(event.event || "unknown"), email: String(event.email || ""),
+        occurred_at: new Date(Number(event.timestamp || Date.now() / 1000) * 1000).toISOString(), payload: event,
+      });
+      const status = statusFor(String(event.event || ""));
+      if (providerMessageId && status) {
+        const messages = await base44.asServiceRole.entities.SharedEmailMessage.filter({ provider_message_id: providerMessageId });
+        for (const message of messages) await base44.asServiceRole.entities.SharedEmailMessage.update(message.id, { delivery_status: status });
+      }
+    }
+    return Response.json({ accepted: rows.length });
+  } catch (error) {
+    console.error("sharedEmailSendgridEvents", error);
+    return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+});

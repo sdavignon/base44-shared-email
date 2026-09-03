@@ -1,0 +1,33 @@
+import { createClientFromRequest } from "npm:@base44/sdk";
+import { getSharedEmailSettings } from "../../shared/sharedEmailTransport.ts";
+
+const normalizeResend = (status: string) => ({ sent: "sent", delivered: "delivered", delivery_delayed: "deferred", bounced: "bounced", failed: "failed" } as Record<string, string>)[status] || status;
+
+Deno.serve(async (request) => {
+  try {
+    const base44 = createClientFromRequest(request);
+    const settings = await getSharedEmailSettings(base44);
+    if (settings.polling_enabled === false) return Response.json({ skipped: true, reason: "Polling disabled" });
+    const messages = await base44.asServiceRole.entities.SharedEmailMessage.filter({ direction: "outbound" }, "-sent_at", 100);
+    const pending = messages.filter((message: any) => message.provider_message_id && ["queued", "sent", "deferred"].includes(message.delivery_status));
+    let updated = 0;
+    if (settings.provider === "resend") {
+      const apiKey = Deno.env.get("RESEND_API_KEY");
+      if (!apiKey) throw new Error("RESEND_API_KEY is not configured");
+      for (const message of pending) {
+        const response = await fetch("https://api.resend.com/emails/" + encodeURIComponent(message.provider_message_id), { headers: { Authorization: "Bearer " + apiKey } });
+        if (!response.ok) continue;
+        const data = await response.json();
+        const status = normalizeResend(String(data.last_event || "sent"));
+        if (status !== message.delivery_status) {
+          await base44.asServiceRole.entities.SharedEmailMessage.update(message.id, { delivery_status: status });
+          updated += 1;
+        }
+      }
+    }
+    return Response.json({ checked: pending.length, updated, provider: settings.provider, note: settings.provider === "sendgrid" ? "SendGrid status is updated by its Event Webhook." : undefined });
+  } catch (error) {
+    console.error("sharedEmailPollStatus", error);
+    return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+});

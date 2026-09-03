@@ -1,0 +1,20 @@
+{
+  "name": "SharedEmailConversation",
+  "type": "object",
+  "properties": {
+    "alias_id": { "type": "string" },
+    "subject": { "type": "string" },
+    "participants": { "type": "array", "items": { "type": "string" } },
+    "preview": { "type": "string" },
+    "folder": { "type": "string", "enum": ["inbox", "sent", "junk", "trash"], "default": "inbox" },
+    "last_message_at": { "type": "string", "format": "date-time" },
+    "unread_count": { "type": "integer", "default": 0 }
+  },
+  "required": ["alias_id", "subject", "folder", "last_message_at"],
+  "rls": {
+    "create": { "user_condition": { "role": "admin" } },
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}

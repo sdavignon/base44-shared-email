@@ -1,0 +1,37 @@
+import { normalizeEmail } from "./sharedEmailConfig.ts";
+
+type Base44Client = any;
+
+export const isSharedEmailAdmin = (user: any) => user?.role === "admin";
+
+export async function sharedEmailAccess(base44: Base44Client, user: any) {
+  if (!user?.id) return { aliases: [], viewAliasIds: new Set<string>(), sendAliasIds: new Set<string>(), isAdmin: false };
+  const aliases = await base44.asServiceRole.entities.SharedEmailAlias.filter({ enabled: true });
+  const enabledIds = new Set(aliases.map((alias: any) => alias.id));
+  if (isSharedEmailAdmin(user)) {
+    return { aliases, viewAliasIds: enabledIds, sendAliasIds: enabledIds, isAdmin: true };
+  }
+  const grants = await base44.asServiceRole.entities.SharedEmailAccessGrant.filter({ user_id: user.id, enabled: true });
+  const viewAliasIds = new Set<string>();
+  const sendAliasIds = new Set<string>();
+  for (const grant of grants) {
+    if (!enabledIds.has(grant.alias_id)) continue;
+    if (grant.can_view || grant.can_send) viewAliasIds.add(grant.alias_id);
+    if (grant.can_send) sendAliasIds.add(grant.alias_id);
+  }
+  return {
+    aliases: aliases.filter((alias: any) => viewAliasIds.has(alias.id)),
+    viewAliasIds,
+    sendAliasIds,
+    isAdmin: false,
+  };
+}
+
+export function requireSharedEmailAlias(access: any, aliasId: string, permission: "view" | "send" = "view") {
+  const allowed = permission === "send" ? access.sendAliasIds : access.viewAliasIds;
+  if (!aliasId || !allowed.has(aliasId)) throw new Error("You do not have " + permission + " access to this mailbox");
+  return access.aliases.find((alias: any) => alias.id === aliasId);
+}
+
+export const matchesAlias = (alias: any, value: unknown) =>
+  normalizeEmail(alias?.address) === normalizeEmail(value);

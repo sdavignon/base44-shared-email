@@ -1,0 +1,39 @@
+import { createClientFromRequest } from "npm:@base44/sdk";
+
+const rank = ["received", "queued", "sent", "deferred", "delivered", "dropped", "bounced", "failed"];
+
+Deno.serve(async (request) => {
+  try {
+    const base44 = createClientFromRequest(request);
+    const conversations = await base44.asServiceRole.entities.SharedEmailConversation.list("-last_message_at", 250);
+    let repaired = 0;
+    for (const conversation of conversations) {
+      const messages = await base44.asServiceRole.entities.SharedEmailMessage.filter({ conversation_id: conversation.id }, "sent_at", 250);
+      if (!messages.length) continue;
+      const latest = messages[messages.length - 1];
+      const unread = messages.filter((message: any) => message.direction === "inbound" && !message.read_at).length;
+      const patch = {
+        preview: String(latest.text_body || "").slice(0, 180),
+        last_message_at: latest.sent_at || latest.created_date,
+        unread_count: unread,
+      };
+      if (patch.preview !== conversation.preview || patch.last_message_at !== conversation.last_message_at || patch.unread_count !== conversation.unread_count) {
+        await base44.asServiceRole.entities.SharedEmailConversation.update(conversation.id, patch);
+        repaired += 1;
+      }
+    }
+    const events = await base44.asServiceRole.entities.SharedEmailEvent.list("-occurred_at", 500);
+    const byProviderId = new Map<string, any>();
+    for (const event of events) {
+      if (!event.provider_message_id) continue;
+      const current = byProviderId.get(event.provider_message_id);
+      const currentRank = rank.indexOf(current?.event_type || "");
+      const nextRank = rank.indexOf(event.event_type);
+      if (!current || nextRank >= currentRank) byProviderId.set(event.provider_message_id, event);
+    }
+    return Response.json({ conversationsChecked: conversations.length, conversationsRepaired: repaired, providerMessagesObserved: byProviderId.size });
+  } catch (error) {
+    console.error("sharedEmailReconcile", error);
+    return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+});

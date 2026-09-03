@@ -1,0 +1,22 @@
+{
+  "name": "SharedEmailDraft",
+  "type": "object",
+  "properties": {
+    "alias_id": { "type": "string" },
+    "to_addresses": { "type": "array", "items": { "type": "string" } },
+    "cc_addresses": { "type": "array", "items": { "type": "string" } },
+    "bcc_addresses": { "type": "array", "items": { "type": "string" } },
+    "subject": { "type": "string" },
+    "text_body": { "type": "string" },
+    "html_body": { "type": "string" },
+    "conversation_id": { "type": "string" },
+    "updated_by": { "type": "string" }
+  },
+  "required": ["alias_id"],
+  "rls": {
+    "create": { "user_condition": { "role": "admin" } },
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}

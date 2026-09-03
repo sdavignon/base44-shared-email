@@ -1,0 +1,19 @@
+{
+  "name": "SharedEmailLog",
+  "type": "object",
+  "properties": {
+    "action": { "type": "string" },
+    "actor_email": { "type": "string" },
+    "alias_id": { "type": "string" },
+    "message_id": { "type": "string" },
+    "success": { "type": "boolean" },
+    "details": { "type": "object" }
+  },
+  "required": ["action", "success"],
+  "rls": {
+    "create": { "user_condition": { "role": "admin" } },
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}

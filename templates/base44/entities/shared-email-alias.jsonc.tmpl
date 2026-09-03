@@ -1,0 +1,18 @@
+{
+  "name": "SharedEmailAlias",
+  "type": "object",
+  "properties": {
+    "address": { "type": "string", "description": "Mailbox address" },
+    "display_name": { "type": "string" },
+    "reply_to": { "type": "string" },
+    "enabled": { "type": "boolean", "default": true },
+    "is_default": { "type": "boolean", "default": false }
+  },
+  "required": ["address", "enabled"],
+  "rls": {
+    "create": { "user_condition": { "role": "admin" } },
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}

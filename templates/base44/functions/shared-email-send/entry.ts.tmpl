@@ -1,0 +1,61 @@
+import { createClientFromRequest, splitAddresses, deliverSharedEmail, getSharedEmailSettings } from "../../shared/sharedEmailTransport.ts";
+import { sharedEmailAccess, requireSharedEmailAlias } from "../../shared/sharedEmailPermissions.ts";
+
+const respond = (body: unknown, status = 200) => Response.json(body, { status });
+
+Deno.serve(async (request) => {
+  const base44 = createClientFromRequest(request);
+  try {
+    const user = await base44.auth.me();
+    if (!user) return respond({ error: "Authentication required" }, 401);
+    const body = await request.json();
+    const access = await sharedEmailAccess(base44, user);
+    const alias = requireSharedEmailAlias(access, String(body.aliasId || ""), "send");
+    const to = splitAddresses(body.to);
+    const cc = splitAddresses(body.cc);
+    const bcc = splitAddresses(body.bcc);
+    if (!to.length) return respond({ error: "At least one recipient is required" }, 400);
+    if (!String(body.subject || "").trim()) return respond({ error: "Subject is required" }, 400);
+    const settings = await getSharedEmailSettings(base44);
+    const sentAt = new Date().toISOString();
+    const delivery = await deliverSharedEmail({
+      from: alias.address,
+      fromName: alias.display_name || settings.from_name,
+      replyTo: alias.reply_to || settings.reply_to,
+      to, cc, bcc,
+      subject: String(body.subject), text: String(body.text || ""), html: body.html ? String(body.html) : undefined,
+    }, settings);
+
+    let conversationId = String(body.conversationId || "");
+    let conversation = conversationId
+      ? (await base44.asServiceRole.entities.SharedEmailConversation.filter({ id: conversationId }))[0]
+      : null;
+    if (!conversation) {
+      conversation = await base44.asServiceRole.entities.SharedEmailConversation.create({
+        alias_id: alias.id, subject: String(body.subject), participants: to,
+        preview: String(body.text || "").slice(0, 180), folder: "sent", last_message_at: sentAt, unread_count: 0,
+      });
+      conversationId = conversation.id;
+    } else {
+      await base44.asServiceRole.entities.SharedEmailConversation.update(conversation.id, {
+        participants: [...new Set([...(conversation.participants || []), ...to])], preview: String(body.text || "").slice(0, 180), last_message_at: sentAt,
+      });
+    }
+    const message = await base44.asServiceRole.entities.SharedEmailMessage.create({
+      conversation_id: conversationId, alias_id: alias.id, direction: "outbound",
+      from_address: alias.address, to_addresses: to, cc_addresses: cc, subject: String(body.subject),
+      text_body: String(body.text || ""), html_body: String(body.html || ""),
+      provider_message_id: delivery.providerMessageId, delivery_status: "sent", sent_at: sentAt, attachments: [],
+    });
+    if (body.draftId) await base44.asServiceRole.entities.SharedEmailDraft.delete(String(body.draftId));
+    await base44.asServiceRole.entities.SharedEmailLog.create({
+      action: "send", actor_email: user.email, alias_id: alias.id, message_id: message.id, success: true,
+      details: { provider: delivery.provider, recipients: to.length },
+    });
+    return respond({ sent: true, message, conversationId });
+  } catch (error) {
+    console.error("sharedEmailSend", error);
+    try { await base44.asServiceRole.entities.SharedEmailLog.create({ action: "send", success: false, details: { error: error instanceof Error ? error.message : String(error) } }); } catch {}
+    return respond({ error: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});

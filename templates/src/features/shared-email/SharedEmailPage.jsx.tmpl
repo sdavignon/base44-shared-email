@@ -1,0 +1,12 @@
+import React from "react";
+import { base44 } from __CLIENT_IMPORT_JSON__;
+import { useAuth } from __AUTH_IMPORT_JSON__;
+import SharedEmailAdmin from "./SharedEmailAdmin";
+
+export default function SharedEmailPage() {
+  const auth = useAuth();
+  const currentUser = auth?.user || auth?.currentUser;
+  if (auth?.isLoading || auth?.loading) return <div className="p-8 text-sm text-slate-500">Loading email…</div>;
+  if (!currentUser) return <div className="p-8 text-sm text-slate-500">Sign in to use shared email.</div>;
+  return <SharedEmailAdmin client={base44} currentUser={currentUser} />;
+}

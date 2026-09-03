@@ -1,0 +1,99 @@
+import React, { useCallback, useEffect, useState } from "react";
+
+const blankDraft = (aliasId = "") => ({ alias_id: aliasId, to_addresses: [], cc_addresses: [], bcc_addresses: [], subject: "", text_body: "" });
+const addressText = (value) => Array.isArray(value) ? value.join(", ") : String(value || "");
+const button = "rounded-lg border px-3 py-2 text-sm font-medium transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50";
+const field = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500";
+
+function Notice({ notice, clear }) {
+  if (!notice) return null;
+  return <div className={"mb-4 flex justify-between rounded-lg border px-4 py-3 text-sm " + (notice.kind === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800")}><span>{notice.text}</span><button onClick={clear} aria-label="Dismiss">×</button></div>;
+}
+
+function ConversationList({ rows, activeId, onOpen }) {
+  if (!rows.length) return <div className="p-8 text-center text-sm text-slate-500">Nothing here yet.</div>;
+  return <div className="divide-y">{rows.map((row) => <button key={row.id} onClick={() => onOpen(row)} className={"block w-full px-4 py-3 text-left hover:bg-slate-50 " + (activeId === row.id ? "bg-slate-100" : "")}>
+    <div className="flex items-center justify-between gap-3"><span className="truncate font-medium text-slate-900">{row.subject || "(no subject)"}</span>{row.unread_count > 0 && <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-white">{row.unread_count}</span>}</div>
+    <div className="mt-1 truncate text-xs text-slate-500">{(row.participants || []).join(", ")}</div>
+    <div className="mt-1 truncate text-sm text-slate-600">{row.preview}</div>
+  </button>)}</div>;
+}
+
+function Thread({ conversation, messages, onReply, onMove, onRead }) {
+  if (!conversation) return <div className="grid min-h-80 place-items-center text-sm text-slate-500">Select a conversation.</div>;
+  return <div className="p-5">
+    <div className="mb-5 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">{conversation.subject}</h2><p className="text-sm text-slate-500">{(conversation.participants || []).join(", ")}</p></div><div className="flex gap-2"><button className={button} onClick={onReply}>Reply</button><select className={field + " !w-auto"} value={conversation.folder} onChange={(event) => onMove(event.target.value)}><option value="inbox">Inbox</option><option value="sent">Sent</option><option value="junk">Junk</option><option value="trash">Trash</option></select></div></div>
+    <div className="space-y-4">{messages.map((message) => <article key={message.id} onMouseEnter={() => !message.read_at && onRead(message)} className="rounded-xl border bg-white p-4"><div className="mb-3 flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span><b className="text-slate-800">{message.from_address}</b> → {addressText(message.to_addresses)}</span><span>{message.delivery_status} · {message.sent_at ? new Date(message.sent_at).toLocaleString() : ""}</span></div><div className="whitespace-pre-wrap text-sm leading-6 text-slate-800">{message.text_body || "(HTML message)"}</div>{message.attachments?.length > 0 && <div className="mt-3 text-xs text-slate-500">{message.attachments.length} attachment(s)</div>}</article>)}</div>
+  </div>;
+}
+
+function Composer({ aliases, draft, setDraft, onSave, onSend, onCancel, busy }) {
+  const setList = (key, value) => setDraft((current) => ({ ...current, [key]: value.split(/[;,]/).map((item) => item.trim()).filter(Boolean) }));
+  return <div className="mx-auto max-w-3xl p-5"><div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-semibold">Compose</h2><button className={button} onClick={onCancel}>Close</button></div><div className="space-y-3 rounded-xl border bg-white p-5">
+    <label className="block text-sm">From<select className={field + " mt-1"} value={draft.alias_id} onChange={(e) => setDraft({ ...draft, alias_id: e.target.value })}>{aliases.map((alias) => <option key={alias.id} value={alias.id}>{alias.display_name ? alias.display_name + " — " : ""}{alias.address}</option>)}</select></label>
+    <label className="block text-sm">To<input className={field + " mt-1"} value={addressText(draft.to_addresses)} onChange={(e) => setList("to_addresses", e.target.value)} placeholder="person@example.com" /></label>
+    <div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Cc<input className={field + " mt-1"} value={addressText(draft.cc_addresses)} onChange={(e) => setList("cc_addresses", e.target.value)} /></label><label className="block text-sm">Bcc<input className={field + " mt-1"} value={addressText(draft.bcc_addresses)} onChange={(e) => setList("bcc_addresses", e.target.value)} /></label></div>
+    <label className="block text-sm">Subject<input className={field + " mt-1"} value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} /></label>
+    <label className="block text-sm">Message<textarea className={field + " mt-1 min-h-52"} value={draft.text_body} onChange={(e) => setDraft({ ...draft, text_body: e.target.value })} /></label>
+    <div className="flex justify-end gap-2"><button className={button} disabled={busy} onClick={onSave}>Save draft</button><button className={button + " border-slate-900 bg-slate-900 text-white hover:bg-slate-700"} disabled={busy} onClick={onSend}>{busy ? "Working…" : "Send"}</button></div>
+  </div></div>;
+}
+
+function Drafts({ drafts, onEdit, onDelete }) {
+  return <div className="p-5"><h2 className="mb-4 text-xl font-semibold">Drafts</h2><div className="divide-y rounded-xl border bg-white">{drafts.length ? drafts.map((draft) => <div key={draft.id} className="flex items-center justify-between gap-4 p-4"><button className="min-w-0 flex-1 text-left" onClick={() => onEdit(draft)}><div className="truncate font-medium">{draft.subject || "(no subject)"}</div><div className="truncate text-sm text-slate-500">To: {addressText(draft.to_addresses) || "No recipient"}</div></button><button className={button} onClick={() => onDelete(draft)}>Delete</button></div>) : <div className="p-8 text-center text-sm text-slate-500">No drafts.</div>}</div></div>;
+}
+
+function Settings({ invoke, notify }) {
+  const [settings, setSettings] = useState({ provider: "sendgrid", from_name: __BRAND_JSON__, reply_to: "", polling_enabled: true, status_poll_minutes: 60 });
+  const [admin, setAdmin] = useState({ users: [], aliases: [], grants: [] });
+  const load = useCallback(async () => {
+    const [settingsData, accessData] = await Promise.all([invoke("settings"), invoke("adminAccess")]);
+    if (settingsData.settings) setSettings(settingsData.settings);
+    setAdmin(accessData);
+  }, [invoke]);
+  useEffect(() => { load().catch((error) => notify(error.message, "error")); }, [load, notify]);
+  const saveSettings = async () => { await invoke("saveSettings", { settings }); notify("Settings saved"); };
+  const addAlias = async () => { await invoke("saveAlias", { alias: { address: __DEFAULT_MAILBOX_JSON__, display_name: __BRAND_JSON__, enabled: true, is_default: !admin.aliases.length } }); await load(); notify("Mailbox added"); };
+  const setGrant = async (userId, aliasId, key, value) => { const current = admin.grants.find((item) => item.user_id === userId && item.alias_id === aliasId) || { user_id: userId, alias_id: aliasId, can_view: false, can_send: false, enabled: true }; await invoke("saveGrant", { grant: { ...current, [key]: value } }); await load(); };
+  return <div className="space-y-6 p-5"><section className="rounded-xl border bg-white p-5"><h2 className="mb-4 text-xl font-semibold">Delivery settings</h2><div className="grid gap-4 sm:grid-cols-2"><label className="text-sm">Provider<select className={field + " mt-1"} value={settings.provider} onChange={(e) => setSettings({ ...settings, provider: e.target.value })}><option value="sendgrid">SendGrid</option><option value="resend">Resend</option></select></label><label className="text-sm">From name<input className={field + " mt-1"} value={settings.from_name || ""} onChange={(e) => setSettings({ ...settings, from_name: e.target.value })} /></label><label className="text-sm">Reply-to<input className={field + " mt-1"} value={settings.reply_to || ""} onChange={(e) => setSettings({ ...settings, reply_to: e.target.value })} /></label><label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={settings.polling_enabled !== false} onChange={(e) => setSettings({ ...settings, polling_enabled: e.target.checked })} /> Poll delivery status</label></div><button className={button + " mt-4"} onClick={saveSettings}>Save settings</button></section>
+    <section className="rounded-xl border bg-white p-5"><div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-semibold">Mailboxes & access</h2><button className={button} onClick={addAlias}>Add default mailbox</button></div>{!admin.aliases.length ? <p className="text-sm text-slate-500">Add the first mailbox to begin.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th className="p-2">Team member</th>{admin.aliases.map((alias) => <th key={alias.id} className="p-2">{alias.address}</th>)}</tr></thead><tbody>{admin.users.map((user) => <tr key={user.id} className="border-t"><td className="p-2">{user.full_name || user.email}<div className="text-xs text-slate-500">{user.email}</div></td>{admin.aliases.map((alias) => { const grant = admin.grants.find((item) => item.user_id === user.id && item.alias_id === alias.id) || {}; return <td key={alias.id} className="p-2"><label className="mr-3"><input type="checkbox" checked={Boolean(grant.can_view)} onChange={(e) => setGrant(user.id, alias.id, "can_view", e.target.checked)} /> View</label><label><input type="checkbox" checked={Boolean(grant.can_send)} onChange={(e) => setGrant(user.id, alias.id, "can_send", e.target.checked)} /> Send</label></td>; })}</tr>)}</tbody></table></div>}</section>
+    <p className="text-center text-xs text-slate-400">Shared email package by <a className="underline" href="https://1976.cloud" target="_blank" rel="noreferrer">1976.cloud</a></p>
+  </div>;
+}
+
+export default function SharedEmailAdmin({ client, currentUser }) {
+  const [access, setAccess] = useState({ aliases: [], isAdmin: false, canSendAliasIds: [] });
+  const [aliasId, setAliasId] = useState("");
+  const [tab, setTab] = useState("inbox");
+  const [rows, setRows] = useState([]);
+  const [drafts, setDrafts] = useState([]);
+  const [active, setActive] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState(blankDraft());
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const notify = useCallback((text, kind = "success") => setNotice({ text, kind }), []);
+  const invoke = useCallback(async (action, payload = {}) => {
+    const response = await client.functions.invoke("shared-email-api", { action, ...payload });
+    const data = response?.data ?? response;
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }, [client]);
+  const loadFolder = useCallback(async (nextTab = tab, nextAlias = aliasId) => {
+    if (!nextAlias || ["compose", "drafts", "settings"].includes(nextTab)) return;
+    const data = await invoke("conversations", { aliasId: nextAlias, folder: nextTab });
+    setRows(data.conversations || []); setActive(null); setMessages([]);
+  }, [aliasId, invoke, tab]);
+  useEffect(() => { (async () => { try { const data = await invoke("access"); setAccess(data); const first = data.aliases?.[0]?.id || ""; setAliasId(first); setDraft(blankDraft(first)); if (first) { const folder = await invoke("conversations", { aliasId: first, folder: "inbox" }); setRows(folder.conversations || []); } } catch (error) { notify(error.message, "error"); } })(); }, [invoke, notify]);
+  const changeTab = async (next) => { setTab(next); if (next === "compose") setDraft(blankDraft(aliasId)); else if (next === "drafts") { const data = await invoke("drafts", { aliasId }); setDrafts(data.drafts || []); } else if (next !== "settings") await loadFolder(next); };
+  const open = async (conversation) => { setActive(conversation); const data = await invoke("messages", { conversationId: conversation.id }); setMessages(data.messages || []); };
+  const save = async () => { setBusy(true); try { const data = await invoke("saveDraft", { id: draft.id, draft }); setDraft(data.draft); notify("Draft saved"); } catch (error) { notify(error.message, "error"); } finally { setBusy(false); } };
+  const send = async () => { setBusy(true); try { const response = await client.functions.invoke("shared-email-send", { aliasId: draft.alias_id, to: draft.to_addresses, cc: draft.cc_addresses, bcc: draft.bcc_addresses, subject: draft.subject, text: draft.text_body, draftId: draft.id, conversationId: draft.conversation_id }); const data = response?.data ?? response; if (data?.error) throw new Error(data.error); notify("Message sent"); setTab("sent"); await loadFolder("sent"); } catch (error) { notify(error.message, "error"); } finally { setBusy(false); } };
+  const canSend = access.canSendAliasIds?.includes(aliasId);
+  const navigation = ["inbox", "sent", "junk", "trash", "drafts", ...(access.isAdmin ? ["settings"] : [])];
+  if (!access.aliases.length && !access.isAdmin) return <div className="rounded-xl border bg-white p-8 text-center"><h1 className="text-xl font-semibold">Shared email</h1><p className="mt-2 text-sm text-slate-500">An administrator needs to assign you a mailbox.</p></div>;
+  return <div className="min-h-screen bg-slate-50 p-4 text-slate-900"><div className="mx-auto max-w-7xl"><header className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-bold">{__BRAND_JSON__ + " Email"}</h1><p className="text-sm text-slate-500">Inbox, drafts, sent mail and delivery status</p></div><div className="flex gap-2">{access.aliases.length > 0 && <select className={field + " !w-auto"} value={aliasId} onChange={async (e) => { setAliasId(e.target.value); setDraft(blankDraft(e.target.value)); await loadFolder(tab, e.target.value); }}>{access.aliases.map((alias) => <option key={alias.id} value={alias.id}>{alias.address}</option>)}</select>}{canSend && <button className={button + " border-slate-900 bg-slate-900 text-white hover:bg-slate-700"} onClick={() => changeTab("compose")}>Compose</button>}</div></header><Notice notice={notice} clear={() => setNotice(null)} />
+    <div className="overflow-hidden rounded-xl border bg-white shadow-sm"><nav className="flex overflow-x-auto border-b bg-slate-50">{navigation.map((item) => <button key={item} className={"px-4 py-3 text-sm capitalize " + (tab === item ? "border-b-2 border-slate-900 font-semibold text-slate-900" : "text-slate-500")} onClick={() => changeTab(item)}>{item}</button>)}</nav>
+      {tab === "compose" ? <Composer aliases={access.aliases.filter((alias) => access.canSendAliasIds.includes(alias.id))} draft={draft} setDraft={setDraft} onSave={save} onSend={send} onCancel={() => changeTab("inbox")} busy={busy} /> : tab === "drafts" ? <Drafts drafts={drafts} onEdit={(item) => { setDraft(item); setTab("compose"); }} onDelete={async (item) => { await invoke("deleteDraft", { id: item.id }); await changeTab("drafts"); notify("Draft deleted"); }} /> : tab === "settings" ? <Settings invoke={invoke} notify={notify} /> : <div className="grid min-h-[34rem] md:grid-cols-[22rem_1fr]"><aside className="border-r"><ConversationList rows={rows} activeId={active?.id} onOpen={open} /></aside><Thread conversation={active} messages={messages} onReply={() => { const last = messages[messages.length - 1]; setDraft({ ...blankDraft(aliasId), to_addresses: [last?.from_address].filter(Boolean), subject: /^re:/i.test(active.subject) ? active.subject : "Re: " + active.subject, conversation_id: active.id }); setTab("compose"); }} onMove={async (folder) => { await invoke("move", { conversationId: active.id, folder }); await loadFolder(tab); notify("Conversation moved"); }} onRead={(message) => invoke("markRead", { messageId: message.id }).catch(() => {})} /></div>}
+    </div><p className="mt-3 text-right text-xs text-slate-400">Signed in as {currentUser?.email}</p></div></div>;
+}

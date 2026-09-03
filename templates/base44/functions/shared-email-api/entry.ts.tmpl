@@ -1,0 +1,135 @@
+import { createClientFromRequest } from "npm:@base44/sdk";
+import { sharedEmailAccess, requireSharedEmailAlias } from "../../shared/sharedEmailPermissions.ts";
+import { isManagedAddress } from "../../shared/sharedEmailConfig.ts";
+
+const ok = (body: unknown, status = 200) => Response.json(body, { status });
+const fail = (error: unknown, status = 400) => ok({ error: error instanceof Error ? error.message : String(error) }, status);
+const take = (value: unknown, fallback = 100) => Math.max(1, Math.min(Number(value) || fallback, 250));
+
+Deno.serve(async (request) => {
+  try {
+    const base44 = createClientFromRequest(request);
+    const user = await base44.auth.me();
+    if (!user) return fail("Authentication required", 401);
+    const payload = request.method === "GET" ? Object.fromEntries(new URL(request.url).searchParams) : await request.json();
+    const action = String(payload.action || "access");
+    const access = await sharedEmailAccess(base44, user);
+
+    if (action === "access") {
+      return ok({ aliases: access.aliases, isAdmin: access.isAdmin, canSendAliasIds: [...access.sendAliasIds] });
+    }
+    if (!access.viewAliasIds.size) return fail("No shared-email access has been assigned", 403);
+
+    if (action === "conversations") {
+      const aliasId = String(payload.aliasId || access.aliases[0]?.id || "");
+      requireSharedEmailAlias(access, aliasId);
+      const folder = String(payload.folder || "inbox");
+      const rows = await base44.asServiceRole.entities.SharedEmailConversation.filter({ alias_id: aliasId, folder }, "-last_message_at", take(payload.limit));
+      return ok({ conversations: rows });
+    }
+    if (action === "messages") {
+      const conversationId = String(payload.conversationId || "");
+      const conversations = await base44.asServiceRole.entities.SharedEmailConversation.filter({ id: conversationId });
+      const conversation = conversations[0];
+      if (!conversation) return fail("Conversation not found", 404);
+      requireSharedEmailAlias(access, conversation.alias_id);
+      const messages = await base44.asServiceRole.entities.SharedEmailMessage.filter({ conversation_id: conversationId }, "sent_at", 250);
+      return ok({ conversation, messages });
+    }
+    if (action === "drafts") {
+      const aliasId = String(payload.aliasId || access.aliases[0]?.id || "");
+      requireSharedEmailAlias(access, aliasId);
+      const drafts = await base44.asServiceRole.entities.SharedEmailDraft.filter({ alias_id: aliasId }, "-updated_date", take(payload.limit));
+      return ok({ drafts });
+    }
+    if (action === "saveDraft") {
+      const draft = payload.draft || {};
+      const aliasId = String(draft.alias_id || "");
+      requireSharedEmailAlias(access, aliasId, "send");
+      const data = { ...draft, updated_by: user.email };
+      delete data.id;
+      const saved = payload.id
+        ? await base44.asServiceRole.entities.SharedEmailDraft.update(String(payload.id), data)
+        : await base44.asServiceRole.entities.SharedEmailDraft.create(data);
+      return ok({ draft: saved });
+    }
+    if (action === "deleteDraft") {
+      const drafts = await base44.asServiceRole.entities.SharedEmailDraft.filter({ id: String(payload.id || "") });
+      if (!drafts[0]) return fail("Draft not found", 404);
+      requireSharedEmailAlias(access, drafts[0].alias_id, "send");
+      await base44.asServiceRole.entities.SharedEmailDraft.delete(drafts[0].id);
+      return ok({ deleted: true });
+    }
+    if (action === "markRead") {
+      const messages = await base44.asServiceRole.entities.SharedEmailMessage.filter({ id: String(payload.messageId || "") });
+      if (!messages[0]) return fail("Message not found", 404);
+      requireSharedEmailAlias(access, messages[0].alias_id);
+      await base44.asServiceRole.entities.SharedEmailMessage.update(messages[0].id, { read_at: new Date().toISOString() });
+      const conversation = (await base44.asServiceRole.entities.SharedEmailConversation.filter({ id: messages[0].conversation_id }))[0];
+      if (conversation) await base44.asServiceRole.entities.SharedEmailConversation.update(conversation.id, { unread_count: Math.max(0, Number(conversation.unread_count || 0) - 1) });
+      return ok({ read: true });
+    }
+    if (action === "move") {
+      const conversations = await base44.asServiceRole.entities.SharedEmailConversation.filter({ id: String(payload.conversationId || "") });
+      if (!conversations[0]) return fail("Conversation not found", 404);
+      requireSharedEmailAlias(access, conversations[0].alias_id);
+      const folder = String(payload.folder || "inbox");
+      if (!["inbox", "sent", "junk", "trash"].includes(folder)) return fail("Invalid folder");
+      await base44.asServiceRole.entities.SharedEmailConversation.update(conversations[0].id, { folder });
+      return ok({ moved: true });
+    }
+    if (action === "settings" && access.isAdmin) {
+      const settings = await base44.asServiceRole.entities.SharedEmailSettings.filter({ key: "default" });
+      return ok({ settings: settings[0] || null });
+    }
+    if (action === "saveSettings" && access.isAdmin) {
+      const existing = await base44.asServiceRole.entities.SharedEmailSettings.filter({ key: "default" });
+      const input = payload.settings || {};
+      const provider = String(input.provider || "sendgrid");
+      if (!["sendgrid", "resend"].includes(provider)) return fail("Unsupported provider");
+      const data = {
+        key: "default", provider, from_name: String(input.from_name || ""), reply_to: String(input.reply_to || ""),
+        polling_enabled: input.polling_enabled !== false, status_poll_minutes: Math.max(5, Number(input.status_poll_minutes) || 60),
+      };
+      const settings = existing[0]
+        ? await base44.asServiceRole.entities.SharedEmailSettings.update(existing[0].id, data)
+        : await base44.asServiceRole.entities.SharedEmailSettings.create(data);
+      return ok({ settings });
+    }
+    if (action === "adminAccess" && access.isAdmin) {
+      const [users, aliases, grants] = await Promise.all([
+        base44.asServiceRole.entities.User.list(),
+        base44.asServiceRole.entities.SharedEmailAlias.list(),
+        base44.asServiceRole.entities.SharedEmailAccessGrant.list(),
+      ]);
+      return ok({ users, aliases, grants });
+    }
+    if (action === "saveGrant" && access.isAdmin) {
+      const grant = payload.grant || {};
+      const data = {
+        user_id: String(grant.user_id || ""), alias_id: String(grant.alias_id || ""),
+        can_view: Boolean(grant.can_view), can_send: Boolean(grant.can_send), enabled: grant.enabled !== false,
+      };
+      if (!data.user_id || !data.alias_id) return fail("user_id and alias_id are required");
+      const existing = await base44.asServiceRole.entities.SharedEmailAccessGrant.filter({ user_id: data.user_id, alias_id: data.alias_id });
+      const saved = existing[0]
+        ? await base44.asServiceRole.entities.SharedEmailAccessGrant.update(existing[0].id, data)
+        : await base44.asServiceRole.entities.SharedEmailAccessGrant.create(data);
+      return ok({ grant: saved });
+    }
+    if (action === "saveAlias" && access.isAdmin) {
+      const alias = payload.alias || {};
+      const data = { address: String(alias.address || "").toLowerCase(), display_name: alias.display_name || "", reply_to: alias.reply_to || "", enabled: alias.enabled !== false, is_default: Boolean(alias.is_default) };
+      if (!data.address) return fail("Mailbox address is required");
+      if (!isManagedAddress(data.address)) return fail("Mailbox must use the configured email domain");
+      const saved = alias.id
+        ? await base44.asServiceRole.entities.SharedEmailAlias.update(String(alias.id), data)
+        : await base44.asServiceRole.entities.SharedEmailAlias.create(data);
+      return ok({ alias: saved });
+    }
+    return fail("Unsupported action", 404);
+  } catch (error) {
+    console.error("sharedEmailApi", error);
+    return fail(error, 500);
+  }
+});

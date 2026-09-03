@@ -1,0 +1,46 @@
+{
+  "name": "base44-shared-email",
+  "version": "0.1.0",
+  "description": "Install a production-oriented shared email inbox into an existing Base44 React app.",
+  "type": "module",
+  "bin": {
+    "base44-shared-email": "./bin/base44-shared-email.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test --test-concurrency=1",
+    "lint": "node --check bin/base44-shared-email.js && node --check src/cli.js && node --check src/config.js && node --check src/installer.js",
+    "pack:check": "npm pack --dry-run"
+  },
+  "keywords": [
+    "base44",
+    "email",
+    "shared-inbox",
+    "sendgrid",
+    "resend",
+    "react"
+  ],
+  "author": "1976.cloud <hello@1976.cloud> (https://1976.cloud)",
+  "homepage": "https://1976.cloud",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sdavignon/base44-shared-email.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sdavignon/base44-shared-email/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

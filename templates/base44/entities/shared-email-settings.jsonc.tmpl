@@ -1,0 +1,19 @@
+{
+  "name": "SharedEmailSettings",
+  "type": "object",
+  "properties": {
+    "key": { "type": "string" },
+    "provider": { "type": "string", "enum": ["sendgrid", "resend"] },
+    "from_name": { "type": "string" },
+    "reply_to": { "type": "string" },
+    "polling_enabled": { "type": "boolean", "default": true },
+    "status_poll_minutes": { "type": "integer", "default": 60 }
+  },
+  "required": ["key", "provider"],
+  "rls": {
+    "create": { "user_condition": { "role": "admin" } },
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}

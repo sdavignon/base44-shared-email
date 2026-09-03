@@ -1,0 +1,23 @@
+export const SHARED_EMAIL = {
+  package: "base44-shared-email",
+  version: "__PACKAGE_VERSION__",
+  builtBy: "1976.cloud",
+  supportUrl: "https://1976.cloud",
+  brandName: __BRAND_JSON__,
+  domain: __DOMAIN_JSON__,
+  inboundDomain: __INBOUND_DOMAIN_JSON__,
+  defaultMailbox: __DEFAULT_MAILBOX_JSON__,
+} as const;
+
+export const normalizeEmail = (value: unknown) => String(value || "").trim().toLowerCase();
+
+export const splitAddresses = (value: unknown) => {
+  if (Array.isArray(value)) return value.map(normalizeEmail).filter(Boolean);
+  return String(value || "")
+    .split(/[;,]/)
+    .map(normalizeEmail)
+    .filter(Boolean);
+};
+
+export const isManagedAddress = (value: unknown) =>
+  normalizeEmail(value).endsWith("@" + SHARED_EMAIL.domain);

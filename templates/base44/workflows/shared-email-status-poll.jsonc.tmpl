@@ -1,0 +1,34 @@
+{
+  "definition": {
+    "document": { "dsl": "1.0.0", "name": "shared_email_status_poll", "version": "1.0", "namespace": "base44" },
+    "do": [
+      {
+        "poll_status": {
+          "call": "invoke_backend_function",
+          "with": { "function_name": "shared-email-poll-status", "args": {} },
+          "then": "reconcile",
+          "x-base44": { "title": "Poll shared-email delivery status", "description": "Sync non-final provider deliveries" }
+        }
+      },
+      {
+        "reconcile": {
+          "call": "invoke_backend_function",
+          "with": { "function_name": "shared-email-reconcile", "args": {} },
+          "then": "end",
+          "x-base44": { "title": "Reconcile shared-email conversations", "description": "Repair conversation summaries and unread counts" }
+        }
+      }
+    ]
+  },
+  "name": "Shared Email Status Poll",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled", "events": [], "schedule_mode": "recurring",
+      "cron_expression": "15 * * * *", "one_time_date": null, "timezone": "America/Denver",
+      "interval_value": null, "interval_unit": null, "interval_anchor": null,
+      "ends_type": "never", "ends_on_date": null, "ends_after_count": null
+    }
+  },
+  "description": "Hourly shared-email status and conversation reconciliation. Package by 1976.cloud."
+}

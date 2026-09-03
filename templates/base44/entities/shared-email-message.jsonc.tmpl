@@ -1,0 +1,27 @@
+{
+  "name": "SharedEmailMessage",
+  "type": "object",
+  "properties": {
+    "conversation_id": { "type": "string" },
+    "alias_id": { "type": "string" },
+    "direction": { "type": "string", "enum": ["inbound", "outbound"] },
+    "from_address": { "type": "string" },
+    "to_addresses": { "type": "array", "items": { "type": "string" } },
+    "cc_addresses": { "type": "array", "items": { "type": "string" } },
+    "subject": { "type": "string" },
+    "text_body": { "type": "string" },
+    "html_body": { "type": "string" },
+    "provider_message_id": { "type": "string" },
+    "delivery_status": { "type": "string", "enum": ["received", "queued", "sent", "delivered", "deferred", "bounced", "dropped", "failed"], "default": "received" },
+    "read_at": { "type": "string", "format": "date-time" },
+    "sent_at": { "type": "string", "format": "date-time" },
+    "attachments": { "type": "array", "items": { "type": "object" } }
+  },
+  "required": ["conversation_id", "alias_id", "direction", "from_address", "to_addresses", "subject"],
+  "rls": {
+    "create": { "user_condition": { "role": "admin" } },
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}

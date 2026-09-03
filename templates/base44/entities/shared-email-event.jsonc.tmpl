@@ -1,0 +1,20 @@
+{
+  "name": "SharedEmailEvent",
+  "type": "object",
+  "properties": {
+    "provider": { "type": "string" },
+    "provider_event_id": { "type": "string" },
+    "provider_message_id": { "type": "string" },
+    "event_type": { "type": "string" },
+    "email": { "type": "string" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" }
+  },
+  "required": ["provider", "event_type", "occurred_at"],
+  "rls": {
+    "create": { "user_condition": { "role": "admin" } },
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}

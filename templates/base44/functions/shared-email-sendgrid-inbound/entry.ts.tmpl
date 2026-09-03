@@ -1,0 +1,74 @@
+import { createClientFromRequest } from "npm:@base44/sdk";
+import { normalizeEmail, splitAddresses } from "../../shared/sharedEmailConfig.ts";
+
+const verify = (request: Request) => {
+  const expected = Deno.env.get("SHARED_EMAIL_WEBHOOK_SECRET");
+  const supplied = new URL(request.url).searchParams.get("token") || request.headers.get("x-shared-email-secret");
+  return Boolean(expected && supplied && expected === supplied);
+};
+
+const header = (headers: string, name: string) => {
+  const match = headers.match(new RegExp("^" + name + ":\\s*(.+)$", "im"));
+  return match?.[1]?.trim() || "";
+};
+
+Deno.serve(async (request) => {
+  if (request.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
+  if (!verify(request)) return Response.json({ error: "Invalid webhook secret" }, { status: 401 });
+  try {
+    const base44 = createClientFromRequest(request);
+    const form = await request.formData();
+    const envelope = JSON.parse(String(form.get("envelope") || "{}"));
+    const headers = String(form.get("headers") || "");
+    const from = normalizeEmail(envelope.from || form.get("from"));
+    const recipients = splitAddresses(envelope.to || form.get("to"));
+    const aliases = await base44.asServiceRole.entities.SharedEmailAlias.filter({ enabled: true });
+    const alias = aliases.find((item: any) => recipients.includes(normalizeEmail(item.address)));
+    if (!alias) return Response.json({ accepted: true, ignored: "No enabled mailbox matched" }, { status: 202 });
+
+    const subject = String(form.get("subject") || "(no subject)").trim();
+    const textBody = String(form.get("text") || "");
+    const htmlBody = String(form.get("html") || "");
+    const receivedAt = new Date().toISOString();
+    const reference = header(headers, "In-Reply-To") || header(headers, "References").split(/\s+/).pop() || "";
+    let conversation = null;
+    if (reference) {
+      const linked = await base44.asServiceRole.entities.SharedEmailMessage.filter({ provider_message_id: reference.replace(/[<>]/g, "") });
+      if (linked[0]) conversation = (await base44.asServiceRole.entities.SharedEmailConversation.filter({ id: linked[0].conversation_id }))[0];
+    }
+    if (!conversation) {
+      const normalizedSubject = subject.replace(/^(re|fwd):\s*/i, "");
+      const candidates = await base44.asServiceRole.entities.SharedEmailConversation.filter({ alias_id: alias.id }, "-last_message_at", 50);
+      conversation = candidates.find((item: any) => String(item.subject || "").replace(/^(re|fwd):\s*/i, "") === normalizedSubject && (item.participants || []).includes(from));
+    }
+    if (!conversation) {
+      conversation = await base44.asServiceRole.entities.SharedEmailConversation.create({
+        alias_id: alias.id, subject, participants: [from], preview: textBody.slice(0, 180),
+        folder: "inbox", last_message_at: receivedAt, unread_count: 1,
+      });
+    } else {
+      await base44.asServiceRole.entities.SharedEmailConversation.update(conversation.id, {
+        participants: [...new Set([...(conversation.participants || []), from])],
+        preview: textBody.slice(0, 180), folder: "inbox", last_message_at: receivedAt,
+        unread_count: Number(conversation.unread_count || 0) + 1,
+      });
+    }
+    const attachmentCount = Number(form.get("attachments") || 0);
+    const attachments = [];
+    for (let index = 1; index <= attachmentCount; index += 1) {
+      const file = form.get("attachment" + index);
+      if (file instanceof File) attachments.push({ name: file.name, type: file.type, size: file.size, note: "Metadata retained; configure object storage to retain content." });
+    }
+    const message = await base44.asServiceRole.entities.SharedEmailMessage.create({
+      conversation_id: conversation.id, alias_id: alias.id, direction: "inbound", from_address: from,
+      to_addresses: recipients, cc_addresses: splitAddresses(form.get("cc")), subject, text_body: textBody,
+      html_body: htmlBody, provider_message_id: header(headers, "Message-ID").replace(/[<>]/g, ""),
+      delivery_status: "received", sent_at: receivedAt, attachments,
+    });
+    await base44.asServiceRole.entities.SharedEmailLog.create({ action: "receive", alias_id: alias.id, message_id: message.id, success: true, details: { from } });
+    return Response.json({ accepted: true });
+  } catch (error) {
+    console.error("sharedEmailSendgridInbound", error);
+    return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+});
