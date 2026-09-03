@@ -40,6 +40,7 @@ function replacements(config) {
   return new Map([
     ["__PACKAGE_VERSION__", PACKAGE_VERSION],
     ["__BRAND_JSON__", JSON.stringify(config.brandName)],
+    ["__BRAND_JSON_ESCAPED__", JSON.stringify(config.brandName).slice(1, -1)],
     ["__DOMAIN_JSON__", JSON.stringify(config.domain)],
     ["__DOMAIN_REGEX__", regexpEscape(config.domain)],
     ["__DEFAULT_MAILBOX_JSON__", JSON.stringify(config.defaultMailbox)],
@@ -90,6 +91,12 @@ async function renderedTemplates(config) {
   const templateFiles = await walk(templateRoot);
   const files = [];
   for (const templatePath of templateFiles) {
+    const normalizedTemplatePath = slash(templatePath);
+    const mcpOnly = normalizedTemplatePath.startsWith("base44/mcp/") ||
+      normalizedTemplatePath.startsWith("base44/agents/shared_email_assistant") ||
+      normalizedTemplatePath.startsWith("base44/functions/shared-email-assistant-api/") ||
+      normalizedTemplatePath === "base44-shared-email.mcp.md.tmpl";
+    if (mcpOnly && !config.mcp) continue;
     const source = await readFile(path.join(templateRoot, templatePath), "utf8");
     const content = render(source, config);
     const relativePath = outputPath(templatePath);
@@ -165,7 +172,8 @@ export async function install(config, options = {}) {
       inboundDomain: config.inboundDomain,
       route: config.route,
       clientImport: config.clientImport,
-      authImport: config.authImport
+      authImport: config.authImport,
+      mcp: config.mcp
     },
     installedFiles: files.map((file) => ({
       path: file.relativePath,

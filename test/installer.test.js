@@ -17,6 +17,7 @@ async function project() {
 }
 
 const config = (target) => buildConfig({ target, brand: "Acme & Co", domain: "example.com" });
+const mcpConfig = (target) => buildConfig({ target, brand: 'Acme "Support"', domain: "example.com", mcp: true });
 
 test.after(async () => {
   await rm(testRoot, { recursive: true, force: true });
@@ -38,10 +39,34 @@ test("installs a namespaced, branded Base44 email feature", async () => {
   const guide = await readFile(path.join(root, "base44-shared-email.install.md"), "utf8");
   assert.match(guide, /https:\/\/1976\.cloud/);
   assert.match(guide, /inbound\.example\.com/);
+  assert.equal(manifest.config.mcp, false);
+  assert.equal(manifest.installedFiles.some((item) => item.path === "base44/mcp/config.json"), false);
   for (const item of manifest.installedFiles.filter((file) => file.path.endsWith(".jsonc"))) {
     const content = await readFile(path.join(root, item.path), "utf8");
     assert.doesNotThrow(() => JSON.parse(content), item.path + " should contain valid JSONC-compatible JSON");
   }
+});
+
+test("optionally installs OAuth App MCP email support", async () => {
+  const root = await project();
+  await install(mcpConfig(root));
+  const manifest = await readManifest(root);
+  assert.equal(manifest.config.mcp, true);
+  assert.ok(manifest.installedFiles.some((item) => item.path === "base44/mcp/config.json"));
+  assert.ok(manifest.installedFiles.some((item) => item.path === "base44/agents/shared_email_assistant.jsonc"));
+  assert.ok(manifest.installedFiles.some((item) => item.path === "base44/functions/shared-email-assistant-api/entry.ts"));
+  const appMcp = JSON.parse(await readFile(path.join(root, "base44", "mcp", "config.json"), "utf8"));
+  assert.equal(appMcp.auth, "oauth");
+  const agent = JSON.parse(await readFile(path.join(root, "base44", "agents", "shared_email_assistant.jsonc"), "utf8"));
+  assert.equal(agent.name, "shared_email_assistant");
+  assert.match(agent.description, /Acme "Support"/);
+  assert.deepEqual(agent.tool_configs.map((tool) => tool.function_name), ["shared-email-assistant-api"]);
+  const gateway = await readFile(path.join(root, "base44", "functions", "shared-email-assistant-api", "entry.ts"), "utf8");
+  assert.match(gateway, /confirm_send/);
+  assert.match(gateway, /explicit confirmation/i);
+  const guide = await readFile(path.join(root, "base44-shared-email.mcp.md"), "utf8");
+  assert.match(guide, /1976\.cloud/);
+  assert.match(guide, /Streamable HTTP/);
 });
 
 test("a second install is idempotent", async () => {

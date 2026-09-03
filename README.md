@@ -16,7 +16,8 @@ From an existing Base44 site's repository:
 npm install --save-dev github:sdavignon/base44-shared-email
 npx base44-shared-email install \
   --brand "Example Company" \
-  --domain example.com
+  --domain example.com \
+  --mcp
 ```
 
 This repository is the current distribution source. If the package is later published to npm, the GitHub install line can be replaced with `npm install --save-dev base44-shared-email`.
@@ -61,13 +62,15 @@ Use `--include-data-model` with uninstall only when you deliberately want the ge
 | `--route` | `/admin/email` | Suggested admin route |
 | `--client-import` | `@/api/base44Client` | Site's Base44 client module |
 | `--auth-import` | `@/lib/AuthContext` | Site's auth-context module |
+| `--mcp` | off | Add OAuth App MCP support and a least-privilege email agent |
 | `--dry-run` | off | Show the plan without writing |
 | `--force` | off | Back up and replace conflicts |
 
 ## What is installed
 
 - Eight `SharedEmail*` entity schemas; the site's `User` entity is not modified.
-- Seven backend functions for the admin API, sending, inbound parsing, event tracking, status, polling and reconciliation.
+- Seven core backend functions for the admin API, sending, inbound parsing, event tracking, status, polling and reconciliation.
+- Optional OAuth App MCP support with a dedicated email assistant and confirmation-gated send tool.
 - An hourly status/reconciliation workflow.
 - A dependency-light React admin UI using the target site's React, Base44 client and utility CSS.
 - A site-specific integration guide.
@@ -86,6 +89,14 @@ All backend resources and generated frontend folders are namespaced to reduce co
 - Generated entity schemas are admin-only; permitted non-admin access is mediated by functions using explicit grants.
 
 Provider setup and DNS are intentionally not automated. They are domain-sensitive changes and must be reviewed in each site's hosting and provider accounts.
+
+## AI assistant access with App MCP
+
+Pass `--mcp` during install or upgrade to add [Base44 App MCP](https://docs.base44.com/Integrations/app-mcp) OAuth configuration, a `shared_email_assistant` agent, and a narrow backend tool for inbox, thread, draft and send operations.
+
+The generated agent does not receive raw entity access. It works through the same backend mailbox grants as the admin UI, and sending is a two-step operation: it must return an exact preview first, then receive explicit user confirmation before delivery. After deployment, use **Dashboard → MCP → Tool access** to enable `shared_email_assistant` and disable raw `SharedEmail*` entity tools unless a specific role truly needs them. Publish again after changing tool access.
+
+The generated `base44-shared-email.mcp.md` includes connection and verification steps for Claude, ChatGPT, Cursor and other Streamable HTTP clients.
 
 ## Provider support
 

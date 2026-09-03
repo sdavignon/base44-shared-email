@@ -1,0 +1,144 @@
+import { createClientFromRequest } from "../../shared/sharedEmailTransport.ts";
+import { requireSharedEmailAlias, sharedEmailAccess } from "../../shared/sharedEmailPermissions.ts";
+import { sendSharedEmail, sharedEmailSendPreview } from "../../shared/sharedEmailSend.ts";
+
+const respond = (body: unknown, status = 200) => Response.json(body, { status });
+const fail = (error: unknown, status = 400) => respond({ error: error instanceof Error ? error.message : String(error) }, status);
+const take = (value: unknown, fallback = 50) => Math.max(1, Math.min(Number(value) || fallback, 100));
+
+Deno.serve(async (request) => {
+  try {
+    const base44 = createClientFromRequest(request);
+    const user = await base44.auth.me();
+    if (!user) return fail("Authentication required", 401);
+    const payload = await request.json();
+    const action = String(payload.action || "access");
+    const access = await sharedEmailAccess(base44, user);
+
+    if (action === "access") {
+      return respond({
+        aliases: access.aliases.map((alias: any) => ({
+          id: alias.id,
+          address: alias.address,
+          display_name: alias.display_name || "",
+          can_send: access.sendAliasIds.has(alias.id),
+        })),
+        is_admin: access.isAdmin,
+      });
+    }
+    if (!access.viewAliasIds.size) return fail("No shared-email access has been assigned", 403);
+
+    if (action === "conversations") {
+      const aliasId = String(payload.aliasId || access.aliases[0]?.id || "");
+      requireSharedEmailAlias(access, aliasId);
+      const folder = String(payload.folder || "inbox");
+      if (!["inbox", "sent", "junk", "trash"].includes(folder)) return fail("Invalid folder");
+      const conversations = await base44.asServiceRole.entities.SharedEmailConversation.filter(
+        { alias_id: aliasId, folder },
+        "-last_message_at",
+        take(payload.limit),
+      );
+      return respond({ conversations });
+    }
+
+    if (action === "messages") {
+      const conversation = (await base44.asServiceRole.entities.SharedEmailConversation.filter({
+        id: String(payload.conversationId || ""),
+      }))[0];
+      if (!conversation) return fail("Conversation not found", 404);
+      requireSharedEmailAlias(access, conversation.alias_id);
+      const messages = await base44.asServiceRole.entities.SharedEmailMessage.filter(
+        { conversation_id: conversation.id },
+        "sent_at",
+        250,
+      );
+      return respond({ conversation, messages });
+    }
+
+    if (action === "drafts") {
+      const aliasId = String(payload.aliasId || access.aliases[0]?.id || "");
+      requireSharedEmailAlias(access, aliasId);
+      const drafts = await base44.asServiceRole.entities.SharedEmailDraft.filter(
+        { alias_id: aliasId },
+        "-updated_date",
+        take(payload.limit),
+      );
+      return respond({ drafts });
+    }
+
+    if (action === "saveDraft") {
+      const draft = payload.draft || {};
+      const aliasId = String(draft.alias_id || "");
+      requireSharedEmailAlias(access, aliasId, "send");
+      const data = { ...draft, alias_id: aliasId, updated_by: user.email };
+      delete data.id;
+      let saved;
+      if (payload.id) {
+        const existing = (await base44.asServiceRole.entities.SharedEmailDraft.filter({ id: String(payload.id) }))[0];
+        if (!existing) return fail("Draft not found", 404);
+        requireSharedEmailAlias(access, existing.alias_id, "send");
+        if (existing.alias_id !== aliasId) return fail("Draft does not belong to the selected mailbox", 403);
+        saved = await base44.asServiceRole.entities.SharedEmailDraft.update(existing.id, data);
+      } else {
+        saved = await base44.asServiceRole.entities.SharedEmailDraft.create(data);
+      }
+      return respond({ draft: saved });
+    }
+
+    if (action === "deleteDraft") {
+      if (payload.confirm_delete !== true) {
+        return respond({ requires_confirmation: true, message: "Explicit confirmation is required before deleting this draft." }, 409);
+      }
+      const draft = (await base44.asServiceRole.entities.SharedEmailDraft.filter({ id: String(payload.id || "") }))[0];
+      if (!draft) return fail("Draft not found", 404);
+      requireSharedEmailAlias(access, draft.alias_id, "send");
+      await base44.asServiceRole.entities.SharedEmailDraft.delete(draft.id);
+      return respond({ deleted: true, id: draft.id });
+    }
+
+    if (action === "markRead") {
+      const message = (await base44.asServiceRole.entities.SharedEmailMessage.filter({
+        id: String(payload.messageId || ""),
+      }))[0];
+      if (!message) return fail("Message not found", 404);
+      requireSharedEmailAlias(access, message.alias_id);
+      await base44.asServiceRole.entities.SharedEmailMessage.update(message.id, { read_at: new Date().toISOString() });
+      const conversation = (await base44.asServiceRole.entities.SharedEmailConversation.filter({ id: message.conversation_id }))[0];
+      if (conversation) {
+        await base44.asServiceRole.entities.SharedEmailConversation.update(conversation.id, {
+          unread_count: Math.max(0, Number(conversation.unread_count || 0) - 1),
+        });
+      }
+      return respond({ read: true, id: message.id });
+    }
+
+    if (action === "move") {
+      const conversation = (await base44.asServiceRole.entities.SharedEmailConversation.filter({
+        id: String(payload.conversationId || ""),
+      }))[0];
+      if (!conversation) return fail("Conversation not found", 404);
+      requireSharedEmailAlias(access, conversation.alias_id);
+      const folder = String(payload.folder || "inbox");
+      if (!["inbox", "sent", "junk", "trash"].includes(folder)) return fail("Invalid folder");
+      await base44.asServiceRole.entities.SharedEmailConversation.update(conversation.id, { folder });
+      return respond({ moved: true, conversationId: conversation.id, folder });
+    }
+
+    if (action === "send") {
+      const preview = await sharedEmailSendPreview(base44, user, payload);
+      if (payload.confirm_send !== true) {
+        return respond({
+          requires_confirmation: true,
+          message: "Explicit confirmation is required before this email can be sent.",
+          preview,
+        });
+      }
+      return respond(await sendSharedEmail(base44, user, payload));
+    }
+
+    return fail("Unsupported action", 404);
+  } catch (error) {
+    console.error("sharedEmailAssistantApi", error);
+    return fail(error, 500);
+  }
+});

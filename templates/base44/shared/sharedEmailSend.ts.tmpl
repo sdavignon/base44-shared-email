@@ -1,0 +1,119 @@
+import { deliverSharedEmail, getSharedEmailSettings, splitAddresses } from "./sharedEmailTransport.ts";
+import { requireSharedEmailAlias, sharedEmailAccess } from "./sharedEmailPermissions.ts";
+
+export function sharedEmailSendFields(body: any) {
+  const to = splitAddresses(body.to);
+  const cc = splitAddresses(body.cc);
+  const bcc = splitAddresses(body.bcc);
+  const subject = String(body.subject || "").trim();
+  const text = String(body.text || "");
+  const html = body.html ? String(body.html) : undefined;
+  if (!to.length) throw new Error("At least one recipient is required");
+  if (!subject) throw new Error("Subject is required");
+  return { to, cc, bcc, subject, text, html };
+}
+
+export async function sharedEmailSendPreview(base44: any, user: any, body: any) {
+  const access = await sharedEmailAccess(base44, user);
+  const alias = requireSharedEmailAlias(access, String(body.aliasId || ""), "send");
+  const fields = sharedEmailSendFields(body);
+  if (body.conversationId) {
+    const conversation = (await base44.asServiceRole.entities.SharedEmailConversation.filter({ id: String(body.conversationId) }))[0];
+    if (!conversation) throw new Error("Conversation not found");
+    requireSharedEmailAlias(access, conversation.alias_id, "send");
+    if (conversation.alias_id !== alias.id) throw new Error("Conversation does not belong to the selected mailbox");
+  }
+  if (body.draftId) {
+    const draft = (await base44.asServiceRole.entities.SharedEmailDraft.filter({ id: String(body.draftId) }))[0];
+    if (!draft) throw new Error("Draft not found");
+    requireSharedEmailAlias(access, draft.alias_id, "send");
+    if (draft.alias_id !== alias.id) throw new Error("Draft does not belong to the selected mailbox");
+  }
+  return {
+    aliasId: alias.id,
+    from: alias.address,
+    to: fields.to,
+    cc: fields.cc,
+    bcc: fields.bcc,
+    subject: fields.subject,
+    text: fields.text,
+    html: fields.html || "",
+    conversationId: String(body.conversationId || ""),
+    draftId: String(body.draftId || ""),
+  };
+}
+
+export async function sendSharedEmail(base44: any, user: any, body: any) {
+  const access = await sharedEmailAccess(base44, user);
+  const alias = requireSharedEmailAlias(access, String(body.aliasId || ""), "send");
+  const fields = sharedEmailSendFields(body);
+  let conversationId = String(body.conversationId || "");
+  let conversation = conversationId
+    ? (await base44.asServiceRole.entities.SharedEmailConversation.filter({ id: conversationId }))[0]
+    : null;
+  if (conversationId && !conversation) throw new Error("Conversation not found");
+  if (conversation) {
+    requireSharedEmailAlias(access, conversation.alias_id, "send");
+    if (conversation.alias_id !== alias.id) throw new Error("Conversation does not belong to the selected mailbox");
+  }
+  const draft = body.draftId
+    ? (await base44.asServiceRole.entities.SharedEmailDraft.filter({ id: String(body.draftId) }))[0]
+    : null;
+  if (body.draftId && !draft) throw new Error("Draft not found");
+  if (draft) {
+    requireSharedEmailAlias(access, draft.alias_id, "send");
+    if (draft.alias_id !== alias.id) throw new Error("Draft does not belong to the selected mailbox");
+  }
+  const settings = await getSharedEmailSettings(base44);
+  const sentAt = new Date().toISOString();
+  const delivery = await deliverSharedEmail({
+    from: alias.address,
+    fromName: alias.display_name || settings.from_name,
+    replyTo: alias.reply_to || settings.reply_to,
+    ...fields,
+  }, settings);
+  if (!conversation) {
+    conversation = await base44.asServiceRole.entities.SharedEmailConversation.create({
+      alias_id: alias.id,
+      subject: fields.subject,
+      participants: fields.to,
+      preview: fields.text.slice(0, 180),
+      folder: "sent",
+      last_message_at: sentAt,
+      unread_count: 0,
+    });
+    conversationId = conversation.id;
+  } else {
+    await base44.asServiceRole.entities.SharedEmailConversation.update(conversation.id, {
+      participants: [...new Set([...(conversation.participants || []), ...fields.to])],
+      preview: fields.text.slice(0, 180),
+      last_message_at: sentAt,
+    });
+  }
+
+  const message = await base44.asServiceRole.entities.SharedEmailMessage.create({
+    conversation_id: conversationId,
+    alias_id: alias.id,
+    direction: "outbound",
+    from_address: alias.address,
+    to_addresses: fields.to,
+    cc_addresses: fields.cc,
+    subject: fields.subject,
+    text_body: fields.text,
+    html_body: fields.html || "",
+    provider_message_id: delivery.providerMessageId,
+    delivery_status: "sent",
+    sent_at: sentAt,
+    attachments: [],
+  });
+  if (draft) await base44.asServiceRole.entities.SharedEmailDraft.delete(draft.id);
+  await base44.asServiceRole.entities.SharedEmailLog.create({
+    action: "send",
+    actor_email: user.email,
+    alias_id: alias.id,
+    message_id: message.id,
+    success: true,
+    details: { provider: delivery.provider, recipients: fields.to.length },
+  });
+  return { sent: true, message, conversationId };
+}

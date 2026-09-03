@@ -31,7 +31,8 @@ function configFlagsFromManifest(manifest) {
     "inbound-domain": manifest.config.inboundDomain,
     route: manifest.config.route,
     "client-import": manifest.config.clientImport,
-    "auth-import": manifest.config.authImport
+    "auth-import": manifest.config.authImport,
+    mcp: Boolean(manifest.config.mcp)
   };
 }
 

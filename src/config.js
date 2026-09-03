@@ -1,6 +1,6 @@
 import path from "node:path";
 
-export const PACKAGE_VERSION = "0.1.0";
+export const PACKAGE_VERSION = "0.2.0";
 export const MANIFEST_NAME = ".base44-shared-email.json";
 
 const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
@@ -13,7 +13,7 @@ export function parseArgs(argv) {
     const value = rest[index];
     if (!value.startsWith("--")) throw new Error("Unexpected argument: " + value);
     const key = value.slice(2);
-    if (["force", "dry-run", "yes", "include-data-model", "json"].includes(key)) {
+    if (["force", "dry-run", "yes", "include-data-model", "json", "mcp"].includes(key)) {
       flags[key] = true;
       continue;
     }
@@ -48,7 +48,8 @@ export function buildConfig(flags = {}, cwd = process.cwd()) {
     route,
     target,
     clientImport: String(flags["client-import"] || "@/api/base44Client"),
-    authImport: String(flags["auth-import"] || "@/lib/AuthContext")
+    authImport: String(flags["auth-import"] || "@/lib/AuthContext"),
+    mcp: Boolean(flags.mcp)
   };
 }
 
@@ -67,6 +68,7 @@ Install options:
   --route PATH             Defaults to /admin/email
   --client-import PATH     Defaults to @/api/base44Client
   --auth-import PATH       Defaults to @/lib/AuthContext
+  --mcp                    Add an OAuth App MCP email-support agent
   --dry-run                Preview without writing
   --force                  Replace package-owned files, preserving backups
   --json                   Emit machine-readable output

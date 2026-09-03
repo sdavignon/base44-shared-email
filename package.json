@@ -1,6 +1,6 @@
 {
   "name": "base44-shared-email",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Install a production-oriented shared email inbox into an existing Base44 React app.",
   "type": "module",
   "bin": {
@@ -28,6 +28,8 @@
     "shared-inbox",
     "sendgrid",
     "resend",
+    "mcp",
+    "ai-agent",
     "react"
   ],
   "author": "1976.cloud <hello@1976.cloud> (https://1976.cloud)",

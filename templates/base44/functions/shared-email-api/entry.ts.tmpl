@@ -48,9 +48,16 @@ Deno.serve(async (request) => {
       requireSharedEmailAlias(access, aliasId, "send");
       const data = { ...draft, updated_by: user.email };
       delete data.id;
-      const saved = payload.id
-        ? await base44.asServiceRole.entities.SharedEmailDraft.update(String(payload.id), data)
-        : await base44.asServiceRole.entities.SharedEmailDraft.create(data);
+      let saved;
+      if (payload.id) {
+        const existing = (await base44.asServiceRole.entities.SharedEmailDraft.filter({ id: String(payload.id) }))[0];
+        if (!existing) return fail("Draft not found", 404);
+        requireSharedEmailAlias(access, existing.alias_id, "send");
+        if (existing.alias_id !== aliasId) return fail("Draft does not belong to the selected mailbox", 403);
+        saved = await base44.asServiceRole.entities.SharedEmailDraft.update(existing.id, data);
+      } else {
+        saved = await base44.asServiceRole.entities.SharedEmailDraft.create(data);
+      }
       return ok({ draft: saved });
     }
     if (action === "deleteDraft") {
