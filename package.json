@@ -1,6 +1,6 @@
 {
   "name": "base44-shared-email",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Install a production-oriented shared email inbox into an existing Base44 React app.",
   "type": "module",
   "bin": {

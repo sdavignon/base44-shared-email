@@ -1,6 +1,6 @@
 import path from "node:path";
 
-export const PACKAGE_VERSION = "0.2.0";
+export const PACKAGE_VERSION = "0.3.0";
 export const MANIFEST_NAME = ".base44-shared-email.json";
 
 const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;

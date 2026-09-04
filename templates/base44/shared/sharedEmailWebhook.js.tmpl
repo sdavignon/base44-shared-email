@@ -1,0 +1,86 @@
+const SIGNATURE_HEADER = "x-twilio-email-event-webhook-signature";
+const TIMESTAMP_HEADER = "x-twilio-email-event-webhook-timestamp";
+
+function decodeBase64(value) {
+  const decoded = atob(value.replace(/\s+/g, ""));
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
+
+function readDerLength(bytes, start) {
+  const first = bytes[start];
+  if (first < 0x80) return { length: first, next: start + 1 };
+  const count = first & 0x7f;
+  if (!count || count > 2 || start + count >= bytes.length) throw new Error("Invalid ECDSA signature length");
+  let length = 0;
+  for (let index = 0; index < count; index += 1) length = (length << 8) | bytes[start + 1 + index];
+  return { length, next: start + 1 + count };
+}
+
+function readDerInteger(bytes, start) {
+  if (bytes[start] !== 0x02) throw new Error("Invalid ECDSA signature integer");
+  const size = readDerLength(bytes, start + 1);
+  let value = bytes.slice(size.next, size.next + size.length);
+  while (value.length > 32 && value[0] === 0) value = value.slice(1);
+  if (!value.length || value.length > 32) throw new Error("Invalid ECDSA signature integer size");
+  const padded = new Uint8Array(32);
+  padded.set(value, 32 - value.length);
+  return { value: padded, next: size.next + size.length };
+}
+
+function derSignatureToP1363(signature) {
+  if (signature[0] !== 0x30) throw new Error("Invalid ECDSA signature");
+  const sequence = readDerLength(signature, 1);
+  if (sequence.next + sequence.length !== signature.length) throw new Error("Invalid ECDSA signature sequence");
+  const r = readDerInteger(signature, sequence.next);
+  const s = readDerInteger(signature, r.next);
+  if (s.next !== signature.length) throw new Error("Invalid ECDSA signature data");
+  const result = new Uint8Array(64);
+  result.set(r.value, 0);
+  result.set(s.value, 32);
+  return result;
+}
+
+function publicKeyBytes(value) {
+  return decodeBase64(value
+    .replace(/-----BEGIN PUBLIC KEY-----/g, "")
+    .replace(/-----END PUBLIC KEY-----/g, ""));
+}
+
+export async function verifySendGridSignature(verificationKeyValue, body, signatureValueInput, timestampInput) {
+  const verificationKey = String(verificationKeyValue || "").trim();
+  const signatureValue = String(signatureValueInput || "").trim();
+  const timestamp = String(timestampInput || "").trim();
+  if (!verificationKey || !signatureValue || !timestamp) return false;
+
+  try {
+    const publicKey = await crypto.subtle.importKey(
+      "spki",
+      publicKeyBytes(verificationKey),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    const timestampBytes = new TextEncoder().encode(timestamp);
+    const signedPayload = new Uint8Array(timestampBytes.length + body.length);
+    signedPayload.set(timestampBytes, 0);
+    signedPayload.set(body, timestampBytes.length);
+    return await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      publicKey,
+      derSignatureToP1363(decodeBase64(signatureValue)),
+      signedPayload,
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function verifySendGridWebhook(request, publicKeyEnvironmentName) {
+  const body = new Uint8Array(await request.clone().arrayBuffer());
+  return verifySendGridSignature(
+    Deno.env.get(publicKeyEnvironmentName),
+    body,
+    request.headers.get(SIGNATURE_HEADER),
+    request.headers.get(TIMESTAMP_HEADER),
+  );
+}

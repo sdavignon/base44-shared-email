@@ -95,6 +95,8 @@ async function renderedTemplates(config) {
     const mcpOnly = normalizedTemplatePath.startsWith("base44/mcp/") ||
       normalizedTemplatePath.startsWith("base44/agents/shared_email_assistant") ||
       normalizedTemplatePath.startsWith("base44/functions/shared-email-assistant-api/") ||
+      normalizedTemplatePath === "base44/entities/shared-email-send-confirmation.jsonc.tmpl" ||
+      normalizedTemplatePath === "base44/shared/sharedEmailConfirmation.js.tmpl" ||
       normalizedTemplatePath === "base44-shared-email.mcp.md.tmpl";
     if (mcpOnly && !config.mcp) continue;
     const source = await readFile(path.join(templateRoot, templatePath), "utf8");

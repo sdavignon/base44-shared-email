@@ -1,0 +1,19 @@
+{
+  "name": "SharedEmailSendConfirmation",
+  "type": "object",
+  "properties": {
+    "token_hash": { "type": "string" },
+    "user_id": { "type": "string" },
+    "alias_id": { "type": "string" },
+    "payload_digest": { "type": "string" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["token_hash", "user_id", "alias_id", "payload_digest", "expires_at", "created_at"],
+  "rls": {
+    "create": { "user_condition": { "role": "admin" } },
+    "read": { "user_condition": { "role": "admin" } },
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}

@@ -1,11 +1,6 @@
 import { createClientFromRequest } from "npm:@base44/sdk";
 import { normalizeEmail, splitAddresses } from "../../shared/sharedEmailConfig.ts";
-
-const verify = (request: Request) => {
-  const expected = Deno.env.get("SHARED_EMAIL_WEBHOOK_SECRET");
-  const supplied = new URL(request.url).searchParams.get("token") || request.headers.get("x-shared-email-secret");
-  return Boolean(expected && supplied && expected === supplied);
-};
+import { verifySendGridWebhook } from "../../shared/sharedEmailWebhook.js";
 
 const header = (headers: string, name: string) => {
   const match = headers.match(new RegExp("^" + name + ":\\s*(.+)$", "im"));
@@ -14,17 +9,22 @@ const header = (headers: string, name: string) => {
 
 Deno.serve(async (request) => {
   if (request.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
-  if (!verify(request)) return Response.json({ error: "Invalid webhook secret" }, { status: 401 });
+  if (!await verifySendGridWebhook(request, "SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY")) return Response.json({ error: "Invalid webhook signature" }, { status: 401 });
   try {
     const base44 = createClientFromRequest(request);
     const form = await request.formData();
     const envelope = JSON.parse(String(form.get("envelope") || "{}"));
     const headers = String(form.get("headers") || "");
+    const providerMessageId = header(headers, "Message-ID").replace(/[<>]/g, "");
     const from = normalizeEmail(envelope.from || form.get("from"));
     const recipients = splitAddresses(envelope.to || form.get("to"));
     const aliases = await base44.asServiceRole.entities.SharedEmailAlias.filter({ enabled: true });
     const alias = aliases.find((item: any) => recipients.includes(normalizeEmail(item.address)));
     if (!alias) return Response.json({ accepted: true, ignored: "No enabled mailbox matched" }, { status: 202 });
+    if (providerMessageId) {
+      const existing = await base44.asServiceRole.entities.SharedEmailMessage.filter({ provider_message_id: providerMessageId, alias_id: alias.id });
+      if (existing[0]) return Response.json({ accepted: true, duplicate: true });
+    }
 
     const subject = String(form.get("subject") || "(no subject)").trim();
     const textBody = String(form.get("text") || "");
@@ -62,7 +62,7 @@ Deno.serve(async (request) => {
     const message = await base44.asServiceRole.entities.SharedEmailMessage.create({
       conversation_id: conversation.id, alias_id: alias.id, direction: "inbound", from_address: from,
       to_addresses: recipients, cc_addresses: splitAddresses(form.get("cc")), subject, text_body: textBody,
-      html_body: htmlBody, provider_message_id: header(headers, "Message-ID").replace(/[<>]/g, ""),
+      html_body: htmlBody, provider_message_id: providerMessageId,
       delivery_status: "received", sent_at: receivedAt, attachments,
     });
     await base44.asServiceRole.entities.SharedEmailLog.create({ action: "receive", alias_id: alias.id, message_id: message.id, success: true, details: { from } });

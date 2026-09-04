@@ -24,8 +24,9 @@ Verify with an account that has only one mailbox grant:
 - List accessible mailboxes; only the granted address should appear.
 - Read Inbox and Junk; no ungranted mailbox content should appear.
 - Prepare a reply and save it as a draft.
-- Ask to send. The assistant must show recipients, subject and body and ask for explicit confirmation before delivery.
+- Ask to send. The assistant must show recipients, subject and body, return a five-minute confirmation token, and ask for explicit confirmation before delivery.
 - Decline the confirmation; no message should be created or delivered.
-- Approve a new test message; confirm it appears in Sent and reaches a terminal provider status.
+- Change a recipient or the body before approval; the original token must be rejected.
+- Approve the exact preview; confirm it sends once, cannot be replayed, appears in Sent and reaches a terminal provider status.
 
 Changing MCP tool access requires publishing again and reconnecting existing AI clients so users can approve the updated permissions.

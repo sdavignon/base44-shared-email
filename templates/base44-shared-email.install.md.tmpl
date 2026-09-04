@@ -30,9 +30,10 @@ Publishing functions alone does not publish the frontend. Use the site's normal 
 
 In Base44, add:
 
-- `SHARED_EMAIL_WEBHOOK_SECRET`: a long random value used by both webhook endpoints.
 - `SENDGRID_API_KEY` when the provider is SendGrid.
 - `RESEND_API_KEY` when the provider is Resend.
+- `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY`: the ECDSA verification public key for the SendGrid Event Webhook.
+- `SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY`: the ECDSA verification public key for the SendGrid Inbound Parse security policy.
 
 Never put these values in source control or frontend environment variables.
 
@@ -43,9 +44,9 @@ The initial mailbox is `__DEFAULT_MAILBOX_TEXT__`. Sign in as a Base44 administr
 For SendGrid:
 
 1. Authenticate `__DOMAIN_TEXT__` for outbound mail.
-2. Point SendGrid Inbound Parse at the deployed `shared-email-sendgrid-inbound` function URL and append `?token=YOUR_SHARED_EMAIL_WEBHOOK_SECRET`.
+2. Enable signature verification for Inbound Parse, store its ECDSA verification key as `SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY`, and point it at the deployed `shared-email-sendgrid-inbound` function URL without credentials in the URL.
 3. Configure the receiving MX hostname as `__INBOUND_DOMAIN_TEXT__` without disturbing unrelated MX records.
-4. Point the SendGrid Event Webhook at the deployed `shared-email-sendgrid-events` function URL with the same token query parameter.
+4. Enable SendGrid Signed Event Webhook, store its verification key as `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY`, and point it at the deployed `shared-email-sendgrid-events` function URL without credentials in the URL.
 5. Subscribe to processed, delivered, deferred, bounce, blocked and dropped events.
 
 For Resend, authenticate `__DOMAIN_TEXT__`, set `RESEND_API_KEY`, and choose Resend in Settings. This package currently supports Resend outbound delivery and polling; inbound parsing is supplied through SendGrid.
@@ -63,6 +64,8 @@ Run `npx base44-shared-email doctor --target .`, then verify all of the followin
 - A test message reaches an external mailbox.
 - The sent message reaches a terminal delivery state.
 - A reply reaches the inbox through Inbound Parse.
+- Unsigned or incorrectly signed webhook requests receive `401` and create no records.
 - A non-admin can access only mailboxes explicitly granted to them.
+- Anonymous and non-admin calls to `shared-email-poll-status` and `shared-email-reconcile` receive `401` or `403`.
 
 The generated health function `shared-email-status` reports configuration metadata without exposing secret values.

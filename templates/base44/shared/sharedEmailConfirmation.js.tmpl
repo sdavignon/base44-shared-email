@@ -1,0 +1,51 @@
+const CONFIRMATION_TTL_MS = 5 * 60 * 1000;
+
+const bytesToHex = (bytes) =>
+  [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+
+const sha256 = async (value) => bytesToHex(
+  new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
+);
+
+const randomToken = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return bytesToHex(bytes);
+};
+
+const previewDigest = (preview) => sha256(JSON.stringify(preview));
+
+export async function createSharedEmailSendConfirmation(base44, user, preview) {
+  if (!user?.id) throw new Error("Authentication required");
+  const token = randomToken();
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + CONFIRMATION_TTL_MS);
+  await base44.asServiceRole.entities.SharedEmailSendConfirmation.create({
+    token_hash: await sha256(token),
+    user_id: user.id,
+    alias_id: preview.aliasId,
+    payload_digest: await previewDigest(preview),
+    expires_at: expiresAt.toISOString(),
+    created_at: createdAt.toISOString(),
+  });
+  return { token, expiresAt: expiresAt.toISOString() };
+}
+
+export async function consumeSharedEmailSendConfirmation(base44, user, preview, tokenValue) {
+  const token = String(tokenValue || "");
+  if (!user?.id || !token) throw new Error("A valid confirmation token is required");
+  const tokenHash = await sha256(token);
+  const confirmation = (await base44.asServiceRole.entities.SharedEmailSendConfirmation.filter({ token_hash: tokenHash }))[0];
+  if (!confirmation || confirmation.user_id !== user.id) throw new Error("The confirmation token is invalid or has already been used");
+  if (confirmation.alias_id !== preview.aliasId) throw new Error("The confirmed mailbox does not match this send request");
+  const expiresAt = Date.parse(confirmation.expires_at);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    await base44.asServiceRole.entities.SharedEmailSendConfirmation.delete(confirmation.id);
+    throw new Error("The confirmation token has expired; preview the message again");
+  }
+  if (confirmation.payload_digest !== await previewDigest(preview)) {
+    throw new Error("Recipients, subject, or body changed after confirmation; preview the message again");
+  }
+
+  // Delete before delivery. A replay or concurrent second request cannot reuse the token.
+  await base44.asServiceRole.entities.SharedEmailSendConfirmation.delete(confirmation.id);
+}

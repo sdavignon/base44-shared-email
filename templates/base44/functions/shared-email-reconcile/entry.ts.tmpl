@@ -5,6 +5,9 @@ const rank = ["received", "queued", "sent", "deferred", "delivered", "dropped", 
 Deno.serve(async (request) => {
   try {
     const base44 = createClientFromRequest(request);
+    const user = await base44.auth.me().catch(() => null);
+    if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+    if (user.role !== "admin") return Response.json({ error: "Administrator access required" }, { status: 403 });
     const conversations = await base44.asServiceRole.entities.SharedEmailConversation.list("-last_message_at", 250);
     let repaired = 0;
     for (const conversation of conversations) {

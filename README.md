@@ -68,7 +68,7 @@ Use `--include-data-model` with uninstall only when you deliberately want the ge
 
 ## What is installed
 
-- Eight `SharedEmail*` entity schemas; the site's `User` entity is not modified.
+- Eight core `SharedEmail*` entity schemas; optional MCP support adds an admin-only send-confirmation entity. The site's `User` entity is not modified.
 - Seven core backend functions for the admin API, sending, inbound parsing, event tracking, status, polling and reconciliation.
 - Optional OAuth App MCP support with a dedicated email assistant and confirmation-gated send tool.
 - An hourly status/reconciliation workflow.
@@ -80,11 +80,12 @@ All backend resources and generated frontend folders are namespaced to reduce co
 
 ## Security model
 
-- Every request requires a Base44 user.
+- Every user-facing request requires a Base44 user; maintenance calls additionally require an administrator.
 - Base44 admins can administer all enabled aliases.
 - Non-admins require an enabled `SharedEmailAccessGrant` for each mailbox.
 - View and send permissions are separate and checked in backend functions, not merely hidden in the UI.
-- Webhook functions require `SHARED_EMAIL_WEBHOOK_SECRET`.
+- Maintenance functions require an authenticated Base44 administrator.
+- SendGrid webhook functions verify the provider's ECDSA signature against the unmodified request body.
 - Provider keys are read only in backend functions.
 - Generated entity schemas are admin-only; permitted non-admin access is mediated by functions using explicit grants.
 
@@ -94,7 +95,7 @@ Provider setup and DNS are intentionally not automated. They are domain-sensitiv
 
 Pass `--mcp` during install or upgrade to add [Base44 App MCP](https://docs.base44.com/Integrations/app-mcp) OAuth configuration, a `shared_email_assistant` agent, and a narrow backend tool for inbox, thread, draft and send operations.
 
-The generated agent does not receive raw entity access. It works through the same backend mailbox grants as the admin UI, and sending is a two-step operation: it must return an exact preview first, then receive explicit user confirmation before delivery. After deployment, use **Dashboard → MCP → Tool access** to enable `shared_email_assistant` and disable raw `SharedEmail*` entity tools unless a specific role truly needs them. Publish again after changing tool access.
+The generated agent does not receive raw entity access. It works through the same backend mailbox grants as the admin UI, and sending is a two-step operation: it must return an exact preview first, then receive explicit user confirmation before delivery. The backend issues a five-minute, single-use token bound to the exact mailbox, recipients, subject and body; changed or replayed requests are rejected. After deployment, use **Dashboard → MCP → Tool access** to enable `shared_email_assistant` and disable raw `SharedEmail*` entity tools unless a specific role truly needs them. Publish again after changing tool access.
 
 The generated `base44-shared-email.mcp.md` includes connection and verification steps for Claude, ChatGPT, Cursor and other Streamable HTTP clients.
 

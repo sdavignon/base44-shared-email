@@ -4,3 +4,12 @@ coverage/
 .smoke/
 .test-tmp/
 .DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+.base44-shared-email-backup/

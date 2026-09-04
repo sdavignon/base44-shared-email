@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -64,9 +65,98 @@ test("optionally installs OAuth App MCP email support", async () => {
   const gateway = await readFile(path.join(root, "base44", "functions", "shared-email-assistant-api", "entry.ts"), "utf8");
   assert.match(gateway, /confirm_send/);
   assert.match(gateway, /explicit confirmation/i);
+  assert.match(gateway, /createSharedEmailSendConfirmation/);
+  assert.match(gateway, /consumeSharedEmailSendConfirmation/);
+  assert.match(gateway, /confirmation_token/);
+  const confirmation = await readFile(path.join(root, "base44", "shared", "sharedEmailConfirmation.js"), "utf8");
+  assert.match(confirmation, /CONFIRMATION_TTL_MS = 5 \* 60 \* 1000/);
+  assert.match(confirmation, /payload_digest/);
+  assert.match(confirmation, /SharedEmailSendConfirmation\.delete/);
+  assert.equal(manifest.installedFiles.filter((item) => item.dataModel).length, 9);
   const guide = await readFile(path.join(root, "base44-shared-email.mcp.md"), "utf8");
   assert.match(guide, /1976\.cloud/);
   assert.match(guide, /Streamable HTTP/);
+});
+
+test("protects maintenance functions and verifies signed webhooks", async () => {
+  const root = await project();
+  await install(config(root));
+
+  for (const functionName of ["shared-email-poll-status", "shared-email-reconcile"]) {
+    const source = await readFile(path.join(root, "base44", "functions", functionName, "entry.ts"), "utf8");
+    assert.match(source, /base44\.auth\.me\(\)/);
+    assert.match(source, /user\.role !== "admin"/);
+    assert.ok(source.indexOf("base44.auth.me()") < source.indexOf("base44.asServiceRole"));
+  }
+
+  for (const functionName of ["shared-email-sendgrid-inbound", "shared-email-sendgrid-events"]) {
+    const source = await readFile(path.join(root, "base44", "functions", functionName, "entry.ts"), "utf8");
+    assert.match(source, /await verifySendGridWebhook\(request, "SENDGRID_(?:INBOUND|EVENT)_WEBHOOK_PUBLIC_KEY"\)/);
+    assert.doesNotMatch(source, /searchParams\.get\("token"\)|x-shared-email-secret|SHARED_EMAIL_WEBHOOK_SECRET/);
+  }
+
+  const verifier = await readFile(path.join(root, "base44", "shared", "sharedEmailWebhook.js"), "utf8");
+  assert.match(verifier, /publicKeyEnvironmentName/);
+  assert.match(verifier, /request\.clone\(\)\.arrayBuffer\(\)/);
+  assert.match(verifier, /crypto\.subtle\.verify/);
+
+  const guide = await readFile(path.join(root, "base44-shared-email.install.md"), "utf8");
+  assert.match(guide, /SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY/);
+  assert.match(guide, /SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY/);
+  assert.doesNotMatch(guide, /\?token=|SHARED_EMAIL_WEBHOOK_SECRET/);
+});
+
+test("SendGrid signature verifier accepts only the exact signed payload", async () => {
+  const source = await readFile(path.resolve("templates/base44/shared/sharedEmailWebhook.js.tmpl"), "utf8");
+  const moduleUrl = "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+  const { verifySendGridSignature } = await import(moduleUrl);
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const verificationKey = publicKey.export({ type: "spki", format: "pem" });
+  const timestamp = "1788451200";
+  const body = Buffer.from('[{"event":"delivered","email":"person@example.com"}]');
+  const signature = sign("sha256", Buffer.concat([Buffer.from(timestamp), body]), privateKey).toString("base64");
+
+  assert.equal(await verifySendGridSignature(verificationKey, body, signature, timestamp), true);
+  assert.equal(await verifySendGridSignature(verificationKey, Buffer.from(body + " "), signature, timestamp), false);
+  assert.equal(await verifySendGridSignature(verificationKey, body, signature, timestamp + "1"), false);
+});
+
+test("send confirmation token is payload-bound, short-lived and single-use", async () => {
+  const source = await readFile(path.resolve("templates/base44/shared/sharedEmailConfirmation.js.tmpl"), "utf8");
+  const moduleUrl = "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+  const { createSharedEmailSendConfirmation, consumeSharedEmailSendConfirmation } = await import(moduleUrl);
+  const rows = [];
+  const confirmations = {
+    create: async (data) => { const row = { id: String(rows.length + 1), ...data }; rows.push(row); return row; },
+    filter: async ({ token_hash }) => rows.filter((row) => row.token_hash === token_hash),
+    delete: async (id) => { const index = rows.findIndex((row) => row.id === id); if (index < 0) throw new Error("not found"); rows.splice(index, 1); },
+  };
+  const base44 = { asServiceRole: { entities: { SharedEmailSendConfirmation: confirmations } } };
+  const user = { id: "user-1" };
+  const preview = { aliasId: "alias-1", to: ["person@example.com"], cc: [], bcc: [], subject: "Hello", text: "Exact body", html: "" };
+  const confirmation = await createSharedEmailSendConfirmation(base44, user, preview);
+
+  assert.equal(rows.length, 1);
+  assert.ok(Date.parse(confirmation.expiresAt) - Date.now() <= 5 * 60 * 1000);
+  await assert.rejects(
+    () => consumeSharedEmailSendConfirmation(base44, user, { ...preview, text: "Changed body" }, confirmation.token),
+    /changed after confirmation/,
+  );
+  assert.equal(rows.length, 1);
+  await consumeSharedEmailSendConfirmation(base44, user, preview, confirmation.token);
+  assert.equal(rows.length, 0);
+  await assert.rejects(
+    () => consumeSharedEmailSendConfirmation(base44, user, preview, confirmation.token),
+    /invalid or has already been used/,
+  );
+
+  const expired = await createSharedEmailSendConfirmation(base44, user, preview);
+  rows[0].expires_at = new Date(Date.now() - 1).toISOString();
+  await assert.rejects(
+    () => consumeSharedEmailSendConfirmation(base44, user, preview, expired.token),
+    /has expired/,
+  );
+  assert.equal(rows.length, 0);
 });
 
 test("a second install is idempotent", async () => {

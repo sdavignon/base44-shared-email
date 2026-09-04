@@ -1,6 +1,7 @@
 import { createClientFromRequest } from "../../shared/sharedEmailTransport.ts";
 import { requireSharedEmailAlias, sharedEmailAccess } from "../../shared/sharedEmailPermissions.ts";
 import { sendSharedEmail, sharedEmailSendPreview } from "../../shared/sharedEmailSend.ts";
+import { consumeSharedEmailSendConfirmation, createSharedEmailSendConfirmation } from "../../shared/sharedEmailConfirmation.js";
 
 const respond = (body: unknown, status = 200) => Response.json(body, { status });
 const fail = (error: unknown, status = 400) => respond({ error: error instanceof Error ? error.message : String(error) }, status);
@@ -127,12 +128,16 @@ Deno.serve(async (request) => {
     if (action === "send") {
       const preview = await sharedEmailSendPreview(base44, user, payload);
       if (payload.confirm_send !== true) {
+        const confirmation = await createSharedEmailSendConfirmation(base44, user, preview);
         return respond({
           requires_confirmation: true,
           message: "Explicit confirmation is required before this email can be sent.",
           preview,
+          confirmation_token: confirmation.token,
+          confirmation_expires_at: confirmation.expiresAt,
         });
       }
+      await consumeSharedEmailSendConfirmation(base44, user, preview, payload.confirmation_token);
       return respond(await sendSharedEmail(base44, user, payload));
     }
 
