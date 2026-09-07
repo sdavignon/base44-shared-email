@@ -55,8 +55,8 @@ export async function deliverSharedEmail(mail: MailInput, settings: any) {
     body: JSON.stringify({
       personalizations: [{
         to: mail.to.map((email) => ({ email })),
-        cc: mail.cc?.map((email) => ({ email })),
-        bcc: mail.bcc?.map((email) => ({ email })),
+        cc: mail.cc?.length ? mail.cc.map((email) => ({ email })) : undefined,
+        bcc: mail.bcc?.length ? mail.bcc.map((email) => ({ email })) : undefined,
       }],
       from: { email: mail.from, name: mail.fromName || settings.from_name || SHARED_EMAIL.brandName },
       reply_to: mail.replyTo || settings.reply_to ? { email: mail.replyTo || settings.reply_to } : undefined,

@@ -48,6 +48,27 @@ test("installs a namespaced, branded Base44 email feature", async () => {
   }
 });
 
+test("generated SendGrid transport omits empty CC and BCC lists", async () => {
+  const root = await project();
+  await install(config(root));
+
+  const source = await readFile(
+    path.join(root, "base44", "shared", "sharedEmailTransport.ts"),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /cc: mail\.cc\?\.length \? mail\.cc\.map\(\(email\) => \(\{ email \}\)\) : undefined/,
+  );
+  assert.match(
+    source,
+    /bcc: mail\.bcc\?\.length \? mail\.bcc\.map\(\(email\) => \(\{ email \}\)\) : undefined/,
+  );
+  assert.doesNotMatch(source, /cc: mail\.cc\?\.map/);
+  assert.doesNotMatch(source, /bcc: mail\.bcc\?\.map/);
+});
+
 test("optionally installs OAuth App MCP email support", async () => {
   const root = await project();
   await install(mcpConfig(root));
