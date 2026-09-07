@@ -13,3 +13,8 @@ coverage/
 *.pfx
 credentials.json
 .base44-shared-email-backup/
+.dev.vars
+.dev.vars.*
+.wrangler/
+examples/cloudflare-sendgrid-relay/wrangler.jsonc
+examples/cloudflare-sendgrid-relay/dist/

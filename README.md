@@ -109,6 +109,12 @@ The generated `base44-shared-email.mcp.md` includes connection and verification 
 
 Attachments received by the default SendGrid handler retain metadata only. Connect object storage in the inbound handler if the site must retain attachment content.
 
+### Event webhooks behind a private hosting login
+
+SendGrid sends email directly. A separate receiver is only needed when the hosting platform blocks provider callbacks behind a site-wide login and cannot exempt the webhook route. Ordinary Base44 apps with publicly reachable signed webhook functions do not need this relay.
+
+The optional [Cloudflare signed-event relay example](examples/cloudflare-sendgrid-relay/README.md) includes source code, configuration, tests, deployment steps, and verification instructions for private OpenAI Sites. It forwards authenticated delivery events to one configured endpoint while keeping the application private. It is separate from the Base44 installer and does not send email or handle Inbound Parse.
+
 ## Development
 
 ```sh

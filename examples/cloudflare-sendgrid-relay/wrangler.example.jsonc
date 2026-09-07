@@ -1,0 +1,12 @@
+{
+  "name": "private-site-sendgrid-events",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "UPSTREAM_WEBHOOK_URL": "https://private-site.example.com/api/webhooks/sendgrid",
+    "RECEIVER_URL": "https://receiver.example.com/api/webhooks/sendgrid"
+  }
+}

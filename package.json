@@ -13,6 +13,7 @@
     "bin",
     "src",
     "templates",
+    "examples/cloudflare-sendgrid-relay",
     "README.md",
     "SECURITY.md",
     "LICENSE"
