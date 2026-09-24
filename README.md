@@ -85,39 +85,49 @@ All backend resources and generated frontend folders are namespaced to reduce co
 - Non-admins require an enabled `SharedEmailAccessGrant` for each mailbox.
 - View and send permissions are separate and checked in backend functions, not merely hidden in the UI.
 - Maintenance functions require an authenticated Base44 administrator.
-- SendGrid webhook functions verify the provider's ECDSA signature against the unmodified request body.
+- SendGrid Event Webhooks verify the provider's ECDSA signature against the unmodified request body. Inbound Parse accepts either that signature or a separate high-entropy URL secret.
 - Provider keys are read only in backend functions.
 - Generated entity schemas are admin-only; permitted non-admin access is mediated by functions using explicit grants.
 
 Provider setup and DNS are intentionally not automated. They are domain-sensitive changes and must be reviewed in each site's hosting and provider accounts.
 
-### SendGrid Inbound Parse signing key
+### SendGrid Inbound Parse authentication
 
 The receiving Base44 app must have a **backend secret named exactly**
 `SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY`. Set its value to the ECDSA **public key**
 from the SendGrid Inbound Parse security policy attached to that domain's Parse
 webhook. This is distinct from `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY` (delivery
 events) and `SENDGRID_API_KEY` (provider API access). The inbound handler reads
-the secret by this exact name and rejects requests when the key or valid
-SendGrid signature is missing. Do not put a signing key, API key, or fallback
-`?secret=` token in the webhook URL, repository, or frontend configuration.
+the secret by this exact name and accepts signed requests when a valid
+SendGrid signature is present. A public key is **not** a shared secret.
+
+If the Parse setting does not have a signed security policy, set a distinct,
+random, at-least-32-character Base44 backend secret named
+`SENDGRID_INBOUND_PARSE_SECRET`. Append `?secret=<that value>` to the SendGrid
+Parse destination URL. Never use `SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY`, a
+SendGrid API key, or an Event Webhook key as the query secret. Treat the URL as
+sensitive: do not commit it or paste it into logs, tickets, or screenshots.
+Signing remains the preferred option because query strings can leak through
+request logs. The receiver accepts either configured method and returns `401`
+if neither authenticates.
 
 Setup checklist:
 
-1. In SendGrid, enable **Signature Verification** for an Inbound Parse security
-   policy and attach that policy to the Parse setting for the receiving hostname.
-2. Copy that policy's public key into the receiving Base44 app's backend secrets
-   under `SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY`; redeploy the backend function so
-   it can read the new secret.
-3. Set the Parse destination to the deployed `shared-email-sendgrid-inbound`
-   function URL. Keep the URL free of credentials and configure the hostname's
-   receiving MX record separately. A lower-priority-number MX pointing to
+1. Choose one authentication method for the Parse setting: attach a SendGrid
+   Signature Verification policy and store its public key under
+   `SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY`, **or** set
+   `SENDGRID_INBOUND_PARSE_SECRET` in Base44 and append its value as the
+   destination URL's `secret` parameter. Redeploy the inbound function after
+   changing backend secrets.
+2. Set the Parse destination to the deployed `shared-email-sendgrid-inbound`
+   function URL and configure the hostname's receiving MX record separately.
+   A lower-priority-number MX pointing to
    another mail host will receive mail first; merely adding SendGrid as a
    higher-number backup MX will not mirror messages to Inbound Parse. Preserve
    any existing mailbox service when choosing the receiving hostname.
-4. Send a real test message to an enabled mailbox alias, then check the SendGrid
+3. Send a real test message to an enabled mailbox alias, then check the SendGrid
    Parse response, Base44 function logs, and the inbox. From this handler, a
-   `401` means signature verification failed; a `202` with `ignored` means no
+   `401` means authentication failed; a `202` with `ignored` means no
    enabled alias matched; a `500` requires inspection of the function error.
    A successful provider callback alone does not prove the message appeared in
    the inbox.
@@ -143,7 +153,7 @@ The generated `base44-shared-email.mcp.md` includes connection and verification 
 | Delivery events | Yes | Polling |
 | Inbound | Yes, Inbound Parse | Use SendGrid inbound |
 
-Attachments received by the default SendGrid handler retain metadata only. Connect object storage in the inbound handler if the site must retain attachment content.
+Inbound attachments are stored in Base44 private file storage. Authorized mailbox viewers receive short-lived links from the shared-email API; test an actual attachment before declaring a site's inbound setup complete.
 
 ### Event webhooks behind a private hosting login
 
