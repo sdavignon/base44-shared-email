@@ -36,6 +36,19 @@ Deno.serve(async (request) => {
       const messages = await base44.asServiceRole.entities.SharedEmailMessage.filter({ conversation_id: conversationId }, "sent_at", 250);
       return ok({ conversation, messages });
     }
+    if (action === "attachmentUrl") {
+      const messages = await base44.asServiceRole.entities.SharedEmailMessage.filter({ id: String(payload.messageId || "") });
+      const message = messages[0];
+      if (!message) return fail("Message not found", 404);
+      if (!access.viewAliasIds.has(message.alias_id)) return fail("Mailbox access required", 403);
+      requireSharedEmailAlias(access, message.alias_id);
+      const index = Number(payload.attachmentIndex);
+      const attachment = Number.isInteger(index) && index >= 0 ? message.attachments?.[index] : null;
+      if (!attachment?.file_uri) return fail("Attachment is unavailable", 404);
+      const { signed_url } = await base44.asServiceRole.integrations.Core.CreateFileSignedUrl({ file_uri: attachment.file_uri, expires_in: 300 });
+      if (!signed_url) return fail("Attachment could not be opened", 502);
+      return ok({ url: signed_url });
+    }
     if (action === "drafts") {
       const aliasId = String(payload.aliasId || access.aliases[0]?.id || "");
       requireSharedEmailAlias(access, aliasId);

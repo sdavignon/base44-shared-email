@@ -4,6 +4,8 @@ const blankDraft = (aliasId = "") => ({ alias_id: aliasId, to_addresses: [], cc_
 const addressText = (value) => Array.isArray(value) ? value.join(", ") : String(value || "");
 const button = "rounded-lg border px-3 py-2 text-sm font-medium transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50";
 const field = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500";
+const READ_ACTIONS = new Set(["access", "conversations", "messages", "drafts", "settings", "adminAccess", "attachmentUrl"]);
+const READ_TIMEOUT_MS = 15000;
 
 function Notice({ notice, clear }) {
   if (!notice) return null;
@@ -19,11 +21,11 @@ function ConversationList({ rows, activeId, onOpen }) {
   </button>)}</div>;
 }
 
-function Thread({ conversation, messages, onReply, onMove, onRead }) {
+function Thread({ conversation, messages, onReply, onMove, onRead, onOpenAttachment }) {
   if (!conversation) return <div className="grid min-h-80 place-items-center text-sm text-slate-500">Select a conversation.</div>;
   return <div className="p-5">
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">{conversation.subject}</h2><p className="text-sm text-slate-500">{(conversation.participants || []).join(", ")}</p></div><div className="flex gap-2"><button className={button} onClick={onReply}>Reply</button><select className={field + " !w-auto"} value={conversation.folder} onChange={(event) => onMove(event.target.value)}><option value="inbox">Inbox</option><option value="sent">Sent</option><option value="junk">Junk</option><option value="trash">Trash</option></select></div></div>
-    <div className="space-y-4">{messages.map((message) => <article key={message.id} onMouseEnter={() => !message.read_at && onRead(message)} className="rounded-xl border bg-white p-4"><div className="mb-3 flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span><b className="text-slate-800">{message.from_address}</b> → {addressText(message.to_addresses)}</span><span>{message.delivery_status} · {message.sent_at ? new Date(message.sent_at).toLocaleString() : ""}</span></div><div className="whitespace-pre-wrap text-sm leading-6 text-slate-800">{message.text_body || "(HTML message)"}</div>{message.attachments?.length > 0 && <div className="mt-3 text-xs text-slate-500">{message.attachments.length} attachment(s)</div>}</article>)}</div>
+    <div className="space-y-4">{messages.map((message) => <article key={message.id} onMouseEnter={() => !message.read_at && onRead(message)} className="rounded-xl border bg-white p-4"><div className="mb-3 flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span><b className="text-slate-800">{message.from_address}</b> → {addressText(message.to_addresses)}</span><span>{message.delivery_status} · {message.sent_at ? new Date(message.sent_at).toLocaleString() : ""}</span></div><div className="whitespace-pre-wrap text-sm leading-6 text-slate-800">{message.text_body || "(HTML message)"}</div>{message.attachments?.length > 0 && <div className="mt-3 space-y-1 text-sm"><p className="text-xs text-slate-500">Attachments</p>{message.attachments.map((attachment, index) => <button key={index} className="block text-left text-blue-700 underline disabled:text-slate-500" disabled={!attachment.file_uri} onClick={() => onOpenAttachment(message.id, index)}>{attachment.name || `Attachment ${index + 1}`}{!attachment.file_uri && " (content unavailable)"}</button>)}</div>}</article>)}</div>
   </div>;
 }
 
@@ -71,13 +73,20 @@ export default function SharedEmailAdmin({ client, currentUser }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState(blankDraft());
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState(null);
   const notify = useCallback((text, kind = "success") => setNotice({ text, kind }), []);
   const invoke = useCallback(async (action, payload = {}) => {
-    const response = await client.functions.invoke("shared-email-api", { action, ...payload });
-    const data = response?.data ?? response;
-    if (data?.error) throw new Error(data.error);
-    return data;
+    let timeout;
+    try {
+      const request = client.functions.invoke("shared-email-api", { action, ...payload });
+      const response = READ_ACTIONS.has(action) ? await Promise.race([request, new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("The shared email service did not respond. Check the email function logs, then try again.")), READ_TIMEOUT_MS);
+      })]) : await request;
+      const data = response?.data ?? response;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    } finally { if (timeout) clearTimeout(timeout); }
   }, [client]);
   const loadFolder = useCallback(async (nextTab = tab, nextAlias = aliasId) => {
     if (!nextAlias || ["compose", "drafts", "settings"].includes(nextTab)) return;
@@ -89,11 +98,13 @@ export default function SharedEmailAdmin({ client, currentUser }) {
   const open = async (conversation) => { setActive(conversation); const data = await invoke("messages", { conversationId: conversation.id }); setMessages(data.messages || []); };
   const save = async () => { setBusy(true); try { const data = await invoke("saveDraft", { id: draft.id, draft }); setDraft(data.draft); notify("Draft saved"); } catch (error) { notify(error.message, "error"); } finally { setBusy(false); } };
   const send = async () => { setBusy(true); try { const response = await client.functions.invoke("shared-email-send", { aliasId: draft.alias_id, to: draft.to_addresses, cc: draft.cc_addresses, bcc: draft.bcc_addresses, subject: draft.subject, text: draft.text_body, draftId: draft.id, conversationId: draft.conversation_id }); const data = response?.data ?? response; if (data?.error) throw new Error(data.error); notify("Message sent"); setTab("sent"); await loadFolder("sent"); } catch (error) { notify(error.message, "error"); } finally { setBusy(false); } };
+  const refresh = async () => { setRefreshing(true); try { if (tab === "drafts") { const data = await invoke("drafts", { aliasId }); setDrafts(data.drafts || []); } else if (!["compose", "settings"].includes(tab)) await loadFolder(tab); notify("Email refreshed"); } catch (error) { notify(error.message, "error"); } finally { setRefreshing(false); } };
+  const openAttachment = async (messageId, attachmentIndex) => { const windowRef = window.open("", "_blank"); try { const data = await invoke("attachmentUrl", { messageId, attachmentIndex }); if (windowRef) windowRef.location.href = data.url; else window.location.href = data.url; } catch (error) { windowRef?.close(); notify(error.message, "error"); } };
   const canSend = access.canSendAliasIds?.includes(aliasId);
   const navigation = ["inbox", "sent", "junk", "trash", "drafts", ...(access.isAdmin ? ["settings"] : [])];
   if (!access.aliases.length && !access.isAdmin) return <div className="rounded-xl border bg-white p-8 text-center"><h1 className="text-xl font-semibold">Shared email</h1><p className="mt-2 text-sm text-slate-500">An administrator needs to assign you a mailbox.</p></div>;
-  return <div className="min-h-screen bg-slate-50 p-4 text-slate-900"><div className="mx-auto max-w-7xl"><header className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-bold">{__BRAND_JSON__ + " Email"}</h1><p className="text-sm text-slate-500">Inbox, drafts, sent mail and delivery status</p></div><div className="flex gap-2">{access.aliases.length > 0 && <select className={field + " !w-auto"} value={aliasId} onChange={async (e) => { setAliasId(e.target.value); setDraft(blankDraft(e.target.value)); await loadFolder(tab, e.target.value); }}>{access.aliases.map((alias) => <option key={alias.id} value={alias.id}>{alias.address}</option>)}</select>}{canSend && <button className={button + " border-slate-900 bg-slate-900 text-white hover:bg-slate-700"} onClick={() => changeTab("compose")}>Compose</button>}</div></header><Notice notice={notice} clear={() => setNotice(null)} />
+  return <div className="min-h-screen bg-slate-50 p-4 text-slate-900"><div className="mx-auto max-w-7xl"><header className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-bold">{__BRAND_JSON__ + " Email"}</h1><p className="text-sm text-slate-500">Inbox, drafts, sent mail and delivery status</p></div><div className="flex gap-2">{access.aliases.length > 0 && <select className={field + " !w-auto"} value={aliasId} onChange={async (e) => { setAliasId(e.target.value); setDraft(blankDraft(e.target.value)); await loadFolder(tab, e.target.value); }}>{access.aliases.map((alias) => <option key={alias.id} value={alias.id}>{alias.address}</option>)}</select>}<button className={button + " inline-flex items-center gap-2"} onClick={refresh} disabled={refreshing || ["compose", "settings"].includes(tab)} aria-label="Refresh email" title="Refresh email"><svg aria-hidden="true" className={"h-4 w-4" + (refreshing ? " animate-spin" : "")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 11a8 8 0 1 0-2.3 6"/><path d="M20 4v7h-7"/></svg>Refresh</button>{canSend && <button className={button + " border-slate-900 bg-slate-900 text-white hover:bg-slate-700"} onClick={() => changeTab("compose")}>Compose</button>}</div></header><Notice notice={notice} clear={() => setNotice(null)} />
     <div className="overflow-hidden rounded-xl border bg-white shadow-sm"><nav className="flex overflow-x-auto border-b bg-slate-50">{navigation.map((item) => <button key={item} className={"px-4 py-3 text-sm capitalize " + (tab === item ? "border-b-2 border-slate-900 font-semibold text-slate-900" : "text-slate-500")} onClick={() => changeTab(item)}>{item}</button>)}</nav>
-      {tab === "compose" ? <Composer aliases={access.aliases.filter((alias) => access.canSendAliasIds.includes(alias.id))} draft={draft} setDraft={setDraft} onSave={save} onSend={send} onCancel={() => changeTab("inbox")} busy={busy} /> : tab === "drafts" ? <Drafts drafts={drafts} onEdit={(item) => { setDraft(item); setTab("compose"); }} onDelete={async (item) => { await invoke("deleteDraft", { id: item.id }); await changeTab("drafts"); notify("Draft deleted"); }} /> : tab === "settings" ? <Settings invoke={invoke} notify={notify} /> : <div className="grid min-h-[34rem] md:grid-cols-[22rem_1fr]"><aside className="border-r"><ConversationList rows={rows} activeId={active?.id} onOpen={open} /></aside><Thread conversation={active} messages={messages} onReply={() => { const last = messages[messages.length - 1]; setDraft({ ...blankDraft(aliasId), to_addresses: [last?.from_address].filter(Boolean), subject: /^re:/i.test(active.subject) ? active.subject : "Re: " + active.subject, conversation_id: active.id }); setTab("compose"); }} onMove={async (folder) => { await invoke("move", { conversationId: active.id, folder }); await loadFolder(tab); notify("Conversation moved"); }} onRead={(message) => invoke("markRead", { messageId: message.id }).catch(() => {})} /></div>}
+      {tab === "compose" ? <Composer aliases={access.aliases.filter((alias) => access.canSendAliasIds.includes(alias.id))} draft={draft} setDraft={setDraft} onSave={save} onSend={send} onCancel={() => changeTab("inbox")} busy={busy} /> : tab === "drafts" ? <Drafts drafts={drafts} onEdit={(item) => { setDraft(item); setTab("compose"); }} onDelete={async (item) => { await invoke("deleteDraft", { id: item.id }); await changeTab("drafts"); notify("Draft deleted"); }} /> : tab === "settings" ? <Settings invoke={invoke} notify={notify} /> : <div className="grid min-h-[34rem] md:grid-cols-[22rem_1fr]"><aside className="border-r"><ConversationList rows={rows} activeId={active?.id} onOpen={open} /></aside><Thread conversation={active} messages={messages} onReply={() => { const last = messages[messages.length - 1]; setDraft({ ...blankDraft(aliasId), to_addresses: [last?.from_address].filter(Boolean), subject: /^re:/i.test(active.subject) ? active.subject : "Re: " + active.subject, conversation_id: active.id }); setTab("compose"); }} onMove={async (folder) => { await invoke("move", { conversationId: active.id, folder }); await loadFolder(tab); notify("Conversation moved"); }} onRead={(message) => invoke("markRead", { messageId: message.id }).catch(() => {})} onOpenAttachment={openAttachment} /></div>}
     </div><p className="mt-3 text-right text-xs text-slate-400">Signed in as {currentUser?.email}</p></div></div>;
 }

@@ -1,6 +1,7 @@
 import { createClientFromRequest } from "npm:@base44/sdk";
 import { normalizeEmail, splitAddresses } from "../../shared/sharedEmailConfig.ts";
 import { verifySendGridWebhook } from "../../shared/sharedEmailWebhook.js";
+import { verifyInboundParseSecret } from "../../shared/sharedEmailInboundAuth.js";
 
 const header = (headers: string, name: string) => {
   const match = headers.match(new RegExp("^" + name + ":\\s*(.+)$", "im"));
@@ -9,7 +10,10 @@ const header = (headers: string, name: string) => {
 
 Deno.serve(async (request) => {
   if (request.method !== "POST") return Response.json({ error: "POST required" }, { status: 405 });
-  if (!await verifySendGridWebhook(request, "SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY")) return Response.json({ error: "Invalid webhook signature" }, { status: 401 });
+  const hasSignature = Boolean(request.headers.get("x-twilio-email-event-webhook-signature"));
+  const authenticated = verifyInboundParseSecret(request, Deno.env.get("SENDGRID_INBOUND_PARSE_SECRET"))
+    || (hasSignature && await verifySendGridWebhook(request, "SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY"));
+  if (!authenticated) return Response.json({ error: "Inbound webhook authentication failed" }, { status: 401 });
   try {
     const base44 = createClientFromRequest(request);
     const form = await request.formData();
@@ -30,6 +34,16 @@ Deno.serve(async (request) => {
     const textBody = String(form.get("text") || "");
     const htmlBody = String(form.get("html") || "");
     const receivedAt = new Date().toISOString();
+    const attachmentCount = Number(form.get("attachments") || 0);
+    if (!Number.isInteger(attachmentCount) || attachmentCount < 0 || attachmentCount > 100) throw new Error("Invalid attachment count");
+    const attachments = [];
+    for (let index = 1; index <= attachmentCount; index += 1) {
+      const file = form.get("attachment" + index);
+      if (!(file instanceof File)) throw new Error(`Missing attachment${index}`);
+      const uploaded = await base44.asServiceRole.integrations.Core.UploadPrivateFile({ file });
+      if (!uploaded?.file_uri) throw new Error(`Attachment${index} could not be stored`);
+      attachments.push({ name: file.name, type: file.type, size: file.size, file_uri: uploaded.file_uri });
+    }
     const reference = header(headers, "In-Reply-To") || header(headers, "References").split(/\s+/).pop() || "";
     let conversation = null;
     if (reference) {
@@ -52,12 +66,6 @@ Deno.serve(async (request) => {
         preview: textBody.slice(0, 180), folder: "inbox", last_message_at: receivedAt,
         unread_count: Number(conversation.unread_count || 0) + 1,
       });
-    }
-    const attachmentCount = Number(form.get("attachments") || 0);
-    const attachments = [];
-    for (let index = 1; index <= attachmentCount; index += 1) {
-      const file = form.get("attachment" + index);
-      if (file instanceof File) attachments.push({ name: file.name, type: file.type, size: file.size, note: "Metadata retained; configure object storage to retain content." });
     }
     const message = await base44.asServiceRole.entities.SharedEmailMessage.create({
       conversation_id: conversation.id, alias_id: alias.id, direction: "inbound", from_address: from,

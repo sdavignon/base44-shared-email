@@ -127,6 +127,32 @@ test("protects maintenance functions and verifies signed webhooks", async () => 
   assert.doesNotMatch(guide, /\?token=|SHARED_EMAIL_WEBHOOK_SECRET/);
 });
 
+test("generated inbound receiver supports a separate parse secret and private attachments", async () => {
+  const root = await project();
+  await install(config(root));
+  const inbound = await readFile(path.join(root, "base44/functions/shared-email-sendgrid-inbound/entry.ts"), "utf8");
+  const api = await readFile(path.join(root, "base44/functions/shared-email-api/entry.ts"), "utf8");
+  const ui = await readFile(path.join(root, "src/features/shared-email/SharedEmailAdmin.jsx"), "utf8");
+  assert.match(inbound, /SENDGRID_INBOUND_PARSE_SECRET/);
+  assert.match(inbound, /verifyInboundParseSecret/);
+  assert.match(inbound, /UploadPrivateFile/);
+  assert.doesNotMatch(inbound, /Metadata retained; configure object storage/);
+  assert.match(api, /action === "attachmentUrl"/);
+  assert.match(api, /requireSharedEmailAlias\(access, message.alias_id\)/);
+  assert.match(api, /CreateFileSignedUrl/);
+  assert.match(ui, /Refresh email/);
+  assert.match(ui, /onOpenAttachment/);
+
+  const source = await readFile(path.join(root, "base44/shared/sharedEmailInboundAuth.js"), "utf8");
+  const moduleUrl = "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+  const { verifyInboundParseSecret } = await import(moduleUrl);
+  const request = (secret) => new Request("https://example.com/inbound" + (secret ? `?secret=${secret}` : ""));
+  assert.equal(verifyInboundParseSecret(request(""), "correct-secret"), false);
+  assert.equal(verifyInboundParseSecret(request("wrong"), "correct-secret"), false);
+  assert.equal(verifyInboundParseSecret(request("correct-secret"), "correct-secret"), true);
+  assert.equal(verifyInboundParseSecret(request("correct-secret"), ""), false);
+});
+
 test("SendGrid signature verifier accepts only the exact signed payload", async () => {
   const source = await readFile(path.resolve("templates/base44/shared/sharedEmailWebhook.js.tmpl"), "utf8");
   const moduleUrl = "data:text/javascript;base64," + Buffer.from(source).toString("base64");
