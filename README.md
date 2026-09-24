@@ -91,6 +91,41 @@ All backend resources and generated frontend folders are namespaced to reduce co
 
 Provider setup and DNS are intentionally not automated. They are domain-sensitive changes and must be reviewed in each site's hosting and provider accounts.
 
+### SendGrid Inbound Parse signing key
+
+The receiving Base44 app must have a **backend secret named exactly**
+`SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY`. Set its value to the ECDSA **public key**
+from the SendGrid Inbound Parse security policy attached to that domain's Parse
+webhook. This is distinct from `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY` (delivery
+events) and `SENDGRID_API_KEY` (provider API access). The inbound handler reads
+the secret by this exact name and rejects requests when the key or valid
+SendGrid signature is missing. Do not put a signing key, API key, or fallback
+`?secret=` token in the webhook URL, repository, or frontend configuration.
+
+Setup checklist:
+
+1. In SendGrid, enable **Signature Verification** for an Inbound Parse security
+   policy and attach that policy to the Parse setting for the receiving hostname.
+2. Copy that policy's public key into the receiving Base44 app's backend secrets
+   under `SENDGRID_INBOUND_WEBHOOK_PUBLIC_KEY`; redeploy the backend function so
+   it can read the new secret.
+3. Set the Parse destination to the deployed `shared-email-sendgrid-inbound`
+   function URL. Keep the URL free of credentials and configure the hostname's
+   receiving MX record separately. A lower-priority-number MX pointing to
+   another mail host will receive mail first; merely adding SendGrid as a
+   higher-number backup MX will not mirror messages to Inbound Parse. Preserve
+   any existing mailbox service when choosing the receiving hostname.
+4. Send a real test message to an enabled mailbox alias, then check the SendGrid
+   Parse response, Base44 function logs, and the inbox. A `401` means signature
+   verification failed; a `202` with `ignored` means no enabled alias matched;
+   a `500` requires inspection of the function error. A successful provider
+   callback alone does not prove the message appeared in the inbox.
+
+See [SendGrid's Inbound Parse security-policy guide](https://www.twilio.com/docs/sendgrid/for-developers/parsing-email/securing-your-parse-webhooks)
+for how to obtain and attach the public key. The generated site-specific
+`base44-shared-email.install.md` also lists this secret and the full verification
+checklist. Never commit the key value.
+
 ## AI assistant access with App MCP
 
 Pass `--mcp` during install or upgrade to add [Base44 App MCP](https://docs.base44.com/Integrations/app-mcp) OAuth configuration, a `shared_email_assistant` agent, and a narrow backend tool for inbox, thread, draft and send operations.
@@ -128,3 +163,4 @@ The package has no runtime dependencies. It is released under the MIT License.
 ## Credits and support
 
 Built and maintained by [1976.cloud](https://1976.cloud). Issues and contributions are welcome at [github.com/sdavignon/base44-shared-email](https://github.com/sdavignon/base44-shared-email).
+
