@@ -116,10 +116,11 @@ Setup checklist:
    higher-number backup MX will not mirror messages to Inbound Parse. Preserve
    any existing mailbox service when choosing the receiving hostname.
 4. Send a real test message to an enabled mailbox alias, then check the SendGrid
-   Parse response, Base44 function logs, and the inbox. A `401` means signature
-   verification failed; a `202` with `ignored` means no enabled alias matched;
-   a `500` requires inspection of the function error. A successful provider
-   callback alone does not prove the message appeared in the inbox.
+   Parse response, Base44 function logs, and the inbox. From this handler, a
+   `401` means signature verification failed; a `202` with `ignored` means no
+   enabled alias matched; a `500` requires inspection of the function error.
+   A successful provider callback alone does not prove the message appeared in
+   the inbox.
 
 See [SendGrid's Inbound Parse security-policy guide](https://www.twilio.com/docs/sendgrid/for-developers/parsing-email/securing-your-parse-webhooks)
 for how to obtain and attach the public key. The generated site-specific
@@ -163,4 +164,3 @@ The package has no runtime dependencies. It is released under the MIT License.
 ## Credits and support
 
 Built and maintained by [1976.cloud](https://1976.cloud). Issues and contributions are welcome at [github.com/sdavignon/base44-shared-email](https://github.com/sdavignon/base44-shared-email).
-
